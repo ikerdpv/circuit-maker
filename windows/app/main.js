@@ -63,31 +63,31 @@ async function checkForUpdates(manual) {
   // En desarrollo (sin empaquetar) solo se busca si se pide a mano.
   if (!app.isPackaged && !manual) return;
   try {
-    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'CircuitMaker' },
-    });
-    if (res.status === 404) throw new Error('Todavía no hay ninguna versión publicada.');
-    if (!res.ok) throw new Error(`GitHub respondió con el error ${res.status}.`);
-    const rel = await res.json();
-    const latest = String(rel.tag_name || '').replace(/^v/i, '');
-    const asset = (rel.assets || []).find(a => a.name === ASSET);
+    // github.com/<repo>/releases/latest redirige a .../releases/tag/vX.Y.Z.
+    // Se usa en lugar de la API porque la API limita a 60 consultas por hora por IP.
+    const res = await fetch(`https://github.com/${REPO}/releases/latest`, { method: 'HEAD', headers: { 'User-Agent': 'CircuitMaker' } });
+    if (!res.ok) throw new Error(`No se pudo conectar con GitHub (error ${res.status}).`);
+    const m = /\/releases\/tag\/(v[^/?#]+)/i.exec(res.url);
+    if (!m) throw new Error('Todavía no hay ninguna versión publicada.');
+    const tag = decodeURIComponent(m[1]);
+    const latest = tag.replace(/^v/i, '');
     const current = app.getVersion();
+    const asset = { browser_download_url: `https://github.com/${REPO}/releases/download/${tag}/${ASSET}` };
 
-    if (!asset || !isNewer(latest, current)) {
+    if (!isNewer(latest, current)) {
       if (manual) {
         await dialog.showMessageBox(win, { type: 'info', message: 'Circuit Maker está al día', detail: `Tienes la última versión (${current}).` });
       }
       return;
     }
 
-    const notes = rel.body ? `\n\nNovedades:\n${rel.body.slice(0, 800)}` : '';
     const { response } = await dialog.showMessageBox(win, {
       type: 'info',
       buttons: ['Actualizar ahora', 'Más tarde'],
       defaultId: 0,
       cancelId: 1,
       message: `Hay una versión nueva de Circuit Maker (${latest})`,
-      detail: `Tienes la ${current}. Se descargará e instalará sola, y la app se reiniciará.${notes}`,
+      detail: `Tienes la ${current}. Se descargará e instalará sola, y la app se reiniciará.`,
     });
     if (response !== 0) return;
     await installUpdate(asset);
@@ -115,7 +115,7 @@ async function installUpdate(asset) {
   // Descarga con progreso.
   const res = await fetch(asset.browser_download_url, { headers: { 'User-Agent': 'CircuitMaker' } });
   if (!res.ok || !res.body) throw new Error(`No se pudo descargar la actualización (error ${res.status}).`);
-  const total = Number(res.headers.get('content-length')) || asset.size || 0;
+  const total = Number(res.headers.get('content-length')) || 0;
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'circuitmaker-update-'));
   const zip = path.join(work, 'update.zip');
   const file = fs.createWriteStream(zip);

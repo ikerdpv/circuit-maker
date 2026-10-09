@@ -12,16 +12,6 @@ enum Updater {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
     }
 
-    private struct Release: Decodable {
-        struct Asset: Decodable {
-            let name: String
-            let browser_download_url: URL
-        }
-        let tag_name: String
-        let body: String?
-        let assets: [Asset]
-    }
-
     private struct UpdateError: LocalizedError {
         let errorDescription: String?
         init(_ message: String) { errorDescription = message }
@@ -34,36 +24,38 @@ enum Updater {
         Task {
             defer { busy = false }
             do {
-                var req = URLRequest(url: URL(string: "https://api.github.com/repos/\(repo)/releases/latest")!)
-                req.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+                // github.com/<repo>/releases/latest redirige a .../releases/tag/vX.Y.Z.
+                // Se usa en lugar de la API porque la API limita a 60 consultas por hora por IP.
+                var req = URLRequest(url: URL(string: "https://github.com/\(repo)/releases/latest")!)
+                req.httpMethod = "HEAD"
                 req.cachePolicy = .reloadIgnoringLocalCacheData
-                let (data, response) = try await URLSession.shared.data(for: req)
-                let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-                if status == 404 { throw UpdateError("Todavía no hay ninguna versión publicada.") }
-                guard status == 200 else { throw UpdateError("GitHub respondió con el error \(status).") }
-
-                let release = try JSONDecoder().decode(Release.self, from: data)
-                let latest = release.tag_name.trimmingCharacters(in: CharacterSet(charactersIn: "vV"))
-                guard isNewer(latest, than: currentVersion),
-                      let asset = release.assets.first(where: { $0.name == assetName }) else {
+                let (_, response) = try await URLSession.shared.data(for: req)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200, let finalURL = http.url else {
+                    throw UpdateError("No se pudo conectar con GitHub.")
+                }
+                let tag = finalURL.lastPathComponent
+                guard finalURL.pathComponents.contains("tag"), tag.lowercased().hasPrefix("v") else {
+                    throw UpdateError("Todavía no hay ninguna versión publicada.")
+                }
+                let latest = String(tag.dropFirst())
+                guard isNewer(latest, than: currentVersion) else {
                     if userInitiated {
                         info("Circuit Maker está al día", "Tienes la última versión (\(currentVersion)).")
                     }
                     return
                 }
+                let download = URL(string: "https://github.com/\(repo)/releases/download/\(tag)/\(assetName)")!
 
                 let auto = ProcessInfo.processInfo.environment["CIRCUITMAKER_AUTOUPDATE"] == "1"
                 if !auto {
                     let alert = NSAlert()
                     alert.messageText = "Hay una versión nueva de Circuit Maker (\(latest))"
-                    var text = "Tienes la \(currentVersion). Se descargará e instalará sola, y la app se reiniciará."
-                    if let notes = release.body, !notes.isEmpty { text += "\n\nNovedades:\n\(notes.prefix(800))" }
-                    alert.informativeText = text
+                    alert.informativeText = "Tienes la \(currentVersion). Se descargará e instalará sola, y la app se reiniciará."
                     alert.addButton(withTitle: "Actualizar ahora")
                     alert.addButton(withTitle: "Más tarde")
                     guard alert.runModal() == .alertFirstButtonReturn else { return }
                 }
-                try await install(from: asset.browser_download_url)
+                try await install(from: download)
             } catch {
                 if userInitiated {
                     let alert = NSAlert()

@@ -1,0 +1,6 @@
+.DS_Store
+.claude/
+build/
+windows/node_modules/
+windows/dist/
+windows/*.zip

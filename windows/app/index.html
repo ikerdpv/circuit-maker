@@ -1,0 +1,1542 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Circuit Maker</title>
+<style>
+:root {
+  --bg: #f3f3f5; --panel: #ffffff; --canvas: #ffffff; --ink: #1d1d1f; --muted: #6e6e73; --line: #d9d9de;
+  --accent: #0a6cff; --accent-soft: rgba(10,108,255,.14); --value: #0060d0; --grid: rgba(0,0,0,.24);
+  --warn: #b25e00; --warn-bg: rgba(255,149,0,.14); --err: #c4001a; --err-bg: rgba(255,59,48,.12);
+  --btn: #ececf0; --btn-hover: #e1e1e6; --input: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1c1c1e; --panel: #242426; --canvas: #18181a; --ink: #f2f2f7; --muted: #9a9aa1; --line: #3a3a3e;
+    --accent: #3d8bff; --accent-soft: rgba(61,139,255,.22); --value: #5aa9ff; --grid: rgba(255,255,255,.2);
+    --warn: #ffb340; --warn-bg: rgba(255,159,10,.15); --err: #ff6961; --err-bg: rgba(255,69,58,.15);
+    --btn: #2f2f32; --btn-hover: #3b3b3f; --input: #1c1c1e;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg); color: var(--ink); overflow: hidden; user-select: none;
+  font: 13px/1.4 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+#app { display: grid; grid-template-rows: 46px 1fr 28px; grid-template-columns: 88px minmax(0, 1fr) 330px; height: 100vh; }
+
+/* Barra superior */
+#toolbar {
+  grid-column: 1 / 4; display: flex; align-items: center; gap: 6px; padding: 0 10px;
+  background: var(--panel); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden;
+}
+#toolbar .brand { font-weight: 700; font-size: 14px; margin-right: 10px; display: flex; align-items: center; gap: 8px; }
+#toolbar > * { flex-shrink: 0; }
+#toolbar .sep { width: 1px; height: 22px; background: var(--line); margin: 0 4px; }
+#toolbar .spacer { flex: 1; }
+button, select {
+  font: inherit; color: var(--ink); background: var(--btn); border: 1px solid transparent;
+  border-radius: 6px; padding: 5px 10px; cursor: pointer;
+}
+button:hover, select:hover { background: var(--btn-hover); }
+button:disabled { opacity: .4; cursor: default; }
+button.toggle.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+#zoomLabel { min-width: 46px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* Paleta */
+#palette {
+  grid-row: 2 / 4; grid-column: 1; background: var(--panel); border-right: 1px solid var(--line);
+  overflow-y: auto; padding: 8px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.tool {
+  width: 70px; height: 54px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+  background: transparent; border: 1.5px solid transparent; border-radius: 8px; padding: 0;
+}
+.tool:hover { background: var(--btn); }
+.tool.on { background: var(--accent-soft); border-color: var(--accent); }
+.tool span { font-size: 10.5px; }
+.tool canvas { width: 50px; height: 24px; }
+.tool .glyph { font-size: 19px; height: 24px; line-height: 24px; }
+#palette hr { width: 60px; border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
+
+/* Lienzo */
+#stage { grid-row: 2; grid-column: 2; position: relative; overflow: hidden; min-width: 0; background: var(--canvas); }
+#canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+/* Barra de estado */
+#status {
+  grid-row: 3; grid-column: 2; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 0 10px;
+  background: var(--panel); border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; white-space: nowrap;
+}
+#status .hint { overflow: hidden; text-overflow: ellipsis; flex: 1; }
+#status b { color: var(--ink); }
+
+/* Inspector */
+#inspector { grid-row: 2 / 4; grid-column: 3; background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 14px; user-select: text; }
+#inspector h3 { margin: 0 0 6px; font-size: 14px; }
+.notice { display: flex; gap: 8px; padding: 9px 10px; border-radius: 8px; margin-bottom: 10px; font-size: 12.5px; }
+.notice.warn { background: var(--warn-bg); color: var(--warn); }
+.notice.err { background: var(--err-bg); color: var(--err); }
+.notice div { color: var(--ink); }
+.muted { color: var(--muted); }
+.small { font-size: 12px; }
+.head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.head canvas { width: 52px; height: 30px; }
+.head input.name { font-size: 17px; font-weight: 700; border: 1px solid transparent; background: transparent; padding: 2px 4px; width: 100%; color: var(--ink); border-radius: 5px; }
+.head input.name:hover, .head input.name:focus { border-color: var(--line); background: var(--input); outline: none; }
+.box { border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; margin-bottom: 12px; }
+.box > .title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin-bottom: 8px; }
+.row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.row label { flex: 1; }
+.row .unit { width: 18px; color: var(--muted); }
+input.num {
+  width: 96px; text-align: right; font: inherit; color: var(--ink); background: var(--input);
+  border: 1px solid var(--line); border-radius: 6px; padding: 4px 7px;
+}
+input.num:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+input.num.bad { border-color: var(--err); }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0 6px; }
+.chips button { font-size: 11.5px; padding: 3px 8px; }
+.check { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+.check input { width: 16px; height: 16px; accent-color: var(--accent); }
+.val { display: flex; justify-content: space-between; gap: 10px; margin: 5px 0; }
+.val span:first-child { color: var(--muted); }
+.val span:last-child { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+.big { font-size: 30px; font-weight: 600; color: var(--value); text-align: center; padding: 4px 0; font-variant-numeric: tabular-nums; }
+.bar { height: 7px; border-radius: 4px; background: var(--btn); overflow: hidden; margin: 6px 0 3px; }
+.bar div { height: 100%; background: #ffcc00; border-radius: 4px; }
+.bar.over div { background: #ff3b30; }
+.actions { display: flex; justify-content: space-between; margin-bottom: 14px; }
+.actions .danger { color: var(--err); }
+hr.div { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
+table.sum { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+table.sum th { text-align: left; font-size: 11px; color: var(--muted); font-weight: 600; padding: 3px 4px; border-bottom: 1px solid var(--line); }
+table.sum td { padding: 4px; }
+table.sum tr.rowsel { cursor: pointer; }
+table.sum tr.rowsel:hover td { background: var(--btn); }
+table.sum tr.cur td { background: var(--accent-soft); }
+
+/* Menú de ejemplos */
+.menu-wrap { position: relative; }
+.menu { position: absolute; top: 34px; left: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px; z-index: 10; box-shadow: 0 8px 24px rgba(0,0,0,.18); display: none; min-width: 190px; }
+.menu.open { display: block; }
+.menu button { display: block; width: 100%; text-align: left; background: transparent; }
+.menu button:hover { background: var(--btn); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <div class="brand"><canvas id="logo" width="44" height="44" style="width:22px;height:22px"></canvas>Circuit Maker</div>
+    <button id="bNew" title="Nuevo (Ctrl+N)">Nuevo</button>
+    <button id="bOpen" title="Abrir (Ctrl+O)">Abrir…</button>
+    <button id="bSave" title="Guardar (Ctrl+S)">Guardar</button>
+    <div class="menu-wrap">
+      <button id="bExamples">Ejemplos ▾</button>
+      <div class="menu" id="examplesMenu">
+        <button data-example="0">Circuito en serie</button>
+        <button data-example="1">Circuito en paralelo</button>
+        <button data-example="2">Circuito mixto</button>
+      </div>
+    </div>
+    <div class="sep"></div>
+    <button id="bUndo" title="Deshacer (Ctrl+Z)">↶</button>
+    <button id="bRedo" title="Rehacer (Ctrl+Y)">↷</button>
+    <div class="spacer"></div>
+    <button id="bZoomOut" title="Alejar (Ctrl+-)">−</button>
+    <span id="zoomLabel">100 %</span>
+    <button id="bZoomIn" title="Acercar (Ctrl++)">+</button>
+    <button id="bFit" title="Encuadrar el circuito">Encuadrar</button>
+    <div class="sep"></div>
+    <button class="toggle on" id="tValues" title="Mostrar valores sobre el esquema">Valores</button>
+    <button class="toggle on" id="tAnimate" title="Animar el movimiento de la corriente">Corriente</button>
+    <button class="toggle on" id="tColors" title="Colorear los cables según su tensión (azul = 0 V, rojo = máxima)">Colores</button>
+    <button id="bUpdates" title="Buscar una versión nueva en GitHub" hidden>Actualizaciones</button>
+  </div>
+  <div id="palette"></div>
+  <div id="stage"><canvas id="canvas"></canvas></div>
+  <div id="inspector">
+    <div id="notices"></div>
+    <div id="sel"></div>
+    <hr class="div">
+    <div id="summary"></div>
+  </div>
+  <div id="status"><span class="hint" id="hint"></span><b id="updateInfo"></b><span id="nodeInfo"></span><span id="coords"></span></div>
+</div>
+<input type="file" id="fileInput" accept=".json,application/json" hidden>
+
+<script>
+'use strict';
+
+// ============================================================
+// Modelo
+// ============================================================
+const GRID = 20, LEN = 4, LPX = GRID * LEN;
+const FONT = '"Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif';
+const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+const KINDS = [
+  { k: 'battery',   title: 'Pila',        prefix: 'E', art: 'una pila' },
+  { k: 'resistor',  title: 'Resistencia', prefix: 'R', art: 'una resistencia' },
+  { k: 'bulb',      title: 'Bombilla',    prefix: 'L', art: 'una bombilla' },
+  { k: 'toggle',    title: 'Interruptor', prefix: 'S', art: 'un interruptor' },
+  { k: 'ammeter',   title: 'Amperímetro', prefix: 'A', art: 'un amperímetro' },
+  { k: 'voltmeter', title: 'Voltímetro',  prefix: 'V', art: 'un voltímetro' },
+];
+const KIND = Object.fromEntries(KINDS.map(k => [k.k, k]));
+
+const P = (x, y) => ({ x, y });
+const keyOf = p => p.x + ',' + p.y;
+const same = (p, q) => p.x === q.x && p.y === q.y;
+const add = (p, q) => P(p.x + q.x, p.y + q.y);
+const sub = (p, q) => P(p.x - q.x, p.y - q.y);
+const px = p => P(p.x * GRID, p.y * GRID);
+const snap = w => P(Math.round(w.x / GRID), Math.round(w.y / GRID));
+const clone = o => JSON.parse(JSON.stringify(o));
+
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID().toUpperCase();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, ch => {
+    const r = Math.random() * 16 | 0;
+    return (ch === 'x' ? r : (r & 3 | 8)).toString(16);
+  }).toUpperCase();
+}
+
+const rotIdx = c => ((c.rot % 4) + 4) % 4;
+const dirOf = c => DIRS[rotIdx(c)];
+const tA = c => P(c.pos.x, c.pos.y);
+const tB = c => { const d = dirOf(c); return P(c.pos.x + d[0] * LEN, c.pos.y + d[1] * LEN); };
+const isVertical = c => dirOf(c)[0] === 0;
+const midPx = c => { const a = px(tA(c)), b = px(tB(c)); return P((a.x + b.x) / 2, (a.y + b.y) / 2); };
+const bulbR = c => Math.max(c.ratedV * c.ratedV / Math.max(c.ratedP, 1e-9), 1e-3);
+
+/** Punto local del símbolo (eje x a lo largo del componente) → lienzo. */
+function worldOf(c, lx, ly) {
+  const d = dirOf(c), a = px(tA(c));
+  return P(a.x + lx * d[0] - ly * d[1], a.y + lx * d[1] + ly * d[0]);
+}
+
+/** Gira 90° alrededor del centro. */
+function rotateComp(c) {
+  const d = dirOf(c);
+  const center = P(c.pos.x + d[0] * LEN / 2, c.pos.y + d[1] * LEN / 2);
+  c.rot = (rotIdx(c) + 1) % 4;
+  const n = dirOf(c);
+  c.pos = P(center.x - n[0] * LEN / 2, center.y - n[1] * LEN / 2);
+}
+
+function nextName(circ, kind) {
+  const names = new Set(circ.components.map(c => c.name));
+  let n = 1;
+  while (names.has(KIND[kind].prefix + n)) n++;
+  return KIND[kind].prefix + n;
+}
+
+function makeComp(circ, kind, pos, rot = 0, cfg = {}) {
+  return Object.assign({
+    id: uuid(), kind, name: nextName(circ, kind), pos: P(pos.x, pos.y), rot,
+    voltage: 9, internalR: 0, resistance: 100, ratedV: 9, ratedP: 2, closed: true,
+  }, cfg);
+}
+
+function addComp(circ, kind, pos, rot = 0, cfg = {}) {
+  const c = makeComp(circ, kind, pos, rot, cfg);
+  circ.components.push(c);
+  return c.id;
+}
+
+/** Cable recto o en forma de L. */
+function route(a, b) {
+  if (same(a, b)) return [];
+  if (a.x === b.x || a.y === b.y) return [[a, b]];
+  const corner = P(b.x, a.y);
+  return [[a, corner], [corner, b]];
+}
+
+function addWire(circ, a, b) {
+  for (const [p, q] of route(a, b)) {
+    if (circ.wires.some(w => (same(w.a, p) && same(w.b, q)) || (same(w.a, q) && same(w.b, p)))) continue;
+    circ.wires.push({ id: uuid(), a: P(p.x, p.y), b: P(q.x, q.y) });
+  }
+}
+
+const findComp = (circ, id) => circ.components.find(c => c.id === id);
+
+function movingComponent(circ, id, d) {
+  const c = clone(circ);
+  const k = findComp(c, id);
+  if (!k) return c;
+  const oa = tA(k), ob = tB(k);
+  k.pos = add(k.pos, d);
+  for (const w of c.wires) {
+    if (same(w.a, oa) || same(w.a, ob)) w.a = add(w.a, d);
+    if (same(w.b, oa) || same(w.b, ob)) w.b = add(w.b, d);
+  }
+  return c;
+}
+
+function movingWire(circ, id, d) {
+  const c = clone(circ);
+  const w = c.wires.find(w => w.id === id);
+  if (w) { w.a = add(w.a, d); w.b = add(w.b, d); }
+  return c;
+}
+
+function distToSeg(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y, l2 = dx * dx + dy * dy;
+  if (l2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+function hitComponent(circ, p) {
+  let best = null, bd = Infinity;
+  for (const c of circ.components) {
+    const d = distToSeg(p, px(tA(c)), px(tB(c)));
+    if (d < 16 && d < bd) { best = c; bd = d; }
+  }
+  return best;
+}
+
+function hitWire(circ, p) {
+  let best = null, bd = Infinity;
+  for (const w of circ.wires) {
+    const d = distToSeg(p, px(w.a), px(w.b));
+    if (d < 6 && d < bd) { best = w; bd = d; }
+  }
+  return best;
+}
+
+/** Borne de componente o extremo de cable cercano a p (en px del mundo). */
+function terminalNear(circ, p, radius = 7) {
+  const pts = [];
+  for (const c of circ.components) pts.push(tA(c), tB(c));
+  for (const w of circ.wires) pts.push(w.a, w.b);
+  let best = null, bd = Infinity;
+  for (const q of pts) {
+    const qp = px(q), d = Math.hypot(p.x - qp.x, p.y - qp.y);
+    if (d < radius && d < bd) { best = q; bd = d; }
+  }
+  return best ? P(best.x, best.y) : null;
+}
+
+function example(n) {
+  const c = { components: [], wires: [] };
+  const p = P;
+  if (n === 1) { // Paralelo
+    addComp(c, 'battery', p(10, 10), 1);
+    addWire(c, p(10, 10), p(12, 10));
+    addComp(c, 'ammeter', p(12, 10));
+    addWire(c, p(16, 10), p(32, 10));
+    addComp(c, 'bulb', p(22, 10), 1);
+    addComp(c, 'bulb', p(32, 10), 1);
+    addWire(c, p(32, 14), p(10, 14));
+  } else if (n === 2) { // Mixto
+    addComp(c, 'battery', p(10, 10), 1, { voltage: 12 });
+    addWire(c, p(10, 10), p(16, 10));
+    addComp(c, 'resistor', p(16, 10), 0, { resistance: 47 });
+    addWire(c, p(20, 10), p(32, 10));
+    addComp(c, 'resistor', p(25, 10), 1, { resistance: 100 });
+    addComp(c, 'bulb', p(32, 10), 1, { ratedV: 12, ratedP: 3 });
+    addWire(c, p(32, 14), p(10, 14));
+    addWire(c, p(32, 10), p(41, 10));
+    addComp(c, 'voltmeter', p(41, 10), 1);
+    addWire(c, p(41, 14), p(32, 14));
+  } else { // Serie
+    addComp(c, 'battery', p(10, 10), 1);
+    addWire(c, p(10, 10), p(13, 10));
+    addComp(c, 'toggle', p(13, 10));
+    addWire(c, p(17, 10), p(20, 10));
+    addComp(c, 'resistor', p(20, 10), 0, { resistance: 10 });
+    addWire(c, p(24, 10), p(28, 10));
+    addComp(c, 'bulb', p(28, 10), 1);
+    addWire(c, p(28, 14), p(22, 14));
+    addComp(c, 'ammeter', p(18, 14));
+    addWire(c, p(18, 14), p(10, 14));
+    addWire(c, p(28, 10), p(37, 10));
+    addComp(c, 'voltmeter', p(37, 10), 1);
+    addWire(c, p(37, 14), p(28, 14));
+  }
+  return c;
+}
+
+/** Acepta archivos de la versión de Mac y rellena lo que falte. */
+function normalize(data) {
+  if (!data || !Array.isArray(data.components) || !Array.isArray(data.wires)) throw new Error('El archivo no es un circuito válido.');
+  const c = { components: [], wires: [] };
+  for (const k of data.components) {
+    if (!KIND[k.kind] || !k.pos) continue;
+    c.components.push(Object.assign(makeComp(c, k.kind, k.pos, k.rot | 0), {
+      id: String(k.id || uuid()), name: String(k.name || nextName(c, k.kind)),
+    }, pickNumbers(k)));
+  }
+  for (const w of data.wires) {
+    if (!w.a || !w.b) continue;
+    c.wires.push({ id: String(w.id || uuid()), a: P(w.a.x | 0, w.a.y | 0), b: P(w.b.x | 0, w.b.y | 0) });
+  }
+  return c;
+}
+function pickNumbers(k) {
+  const o = {};
+  for (const f of ['voltage', 'internalR', 'resistance', 'ratedV', 'ratedP']) if (Number.isFinite(k[f])) o[f] = k[f];
+  if (typeof k.closed === 'boolean') o.closed = k.closed;
+  return o;
+}
+
+// ============================================================
+// Cálculo: análisis nodal modificado (MNA) en continua
+// ============================================================
+const R_WIRE = 1e-3, R_VOLTMETER = 1e7, GMIN = 1e-9;
+
+function onSegment(p, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  if (dx * (p.y - a.y) - dy * (p.x - a.x) !== 0) return false;
+  const dot = (p.x - a.x) * dx + (p.y - a.y) * dy;
+  return dot > 0 && dot < dx * dx + dy * dy;
+}
+
+function solve(c) {
+  const res = { comps: {}, segs: [], nodeV: new Map(), degree: new Map(), error: null, warnings: [], groundName: null, vmax: 0 };
+  const pts = new Map();
+  const addPt = p => pts.set(keyOf(p), p);
+  for (const k of c.components) { addPt(tA(k)); addPt(tB(k)); }
+  for (const w of c.wires) if (!same(w.a, w.b)) { addPt(w.a); addPt(w.b); }
+  if (pts.size === 0) return res;
+  const ptList = [...pts.values()];
+
+  // Trocea los cables donde otro elemento se apoya (uniones en T).
+  const pieces = [];
+  for (const w of c.wires) {
+    if (same(w.a, w.b)) continue;
+    const md = p => Math.abs(p.x - w.a.x) + Math.abs(p.y - w.a.y);
+    const inner = ptList.filter(p => onSegment(p, w.a, w.b)).sort((p, q) => md(p) - md(q));
+    let prev = w.a;
+    for (const q of [...inner, w.b]) { pieces.push({ id: w.id, a: prev, b: q }); prev = q; }
+  }
+  const inc = p => res.degree.set(keyOf(p), (res.degree.get(keyOf(p)) || 0) + 1);
+  for (const k of c.components) { inc(tA(k)); inc(tB(k)); }
+  for (const p of pieces) { inc(p.a); inc(p.b); }
+
+  // Nodo 0 = referencia: borne − de la primera pila.
+  const sorted = ptList.slice().sort((p, q) => p.x - q.x || p.y - q.y);
+  const firstBattery = c.components.find(k => k.kind === 'battery');
+  const ground = firstBattery ? tB(firstBattery) : sorted[0];
+  res.groundName = firstBattery ? firstBattery.name : null;
+  const idx = new Map([[keyOf(ground), 0]]);
+  let n = 1;
+  for (const p of sorted) if (!same(p, ground)) idx.set(keyOf(p), n++);
+  const I = p => idx.get(keyOf(p));
+
+  const rs = [], vs = [], compR = {}, compV = {};
+  for (const k of c.components) {
+    const na = I(tA(k)), nb = I(tB(k));
+    switch (k.kind) {
+      case 'battery':
+        compV[k.id] = vs.length;
+        if (k.internalR > 1e-9) { const mid = n++; vs.push([na, mid, k.voltage]); rs.push([mid, nb, k.internalR]); }
+        else vs.push([na, nb, k.voltage]);
+        break;
+      case 'resistor': compR[k.id] = rs.length; rs.push([na, nb, Math.max(k.resistance, 1e-6)]); break;
+      case 'bulb': compR[k.id] = rs.length; rs.push([na, nb, bulbR(k)]); break;
+      case 'toggle': if (k.closed) { compR[k.id] = rs.length; rs.push([na, nb, R_WIRE]); } break;
+      case 'ammeter': compR[k.id] = rs.length; rs.push([na, nb, R_WIRE]); break;
+      case 'voltmeter': compR[k.id] = rs.length; rs.push([na, nb, R_VOLTMETER]); break;
+    }
+  }
+  const firstPiece = rs.length;
+  for (const p of pieces) rs.push([I(p.a), I(p.b), R_WIRE]);
+
+  const nn = n - 1, size = nn + vs.length;
+  const A = Array.from({ length: size }, () => new Float64Array(size));
+  const z = new Float64Array(size);
+  for (let k = 0; k < nn; k++) A[k][k] += GMIN;
+  for (const [n1, n2, r] of rs) {
+    const g = 1 / r;
+    if (n1 > 0) A[n1 - 1][n1 - 1] += g;
+    if (n2 > 0) A[n2 - 1][n2 - 1] += g;
+    if (n1 > 0 && n2 > 0) { A[n1 - 1][n2 - 1] -= g; A[n2 - 1][n1 - 1] -= g; }
+  }
+  vs.forEach(([n1, n2, v], m) => {
+    const row = nn + m;
+    if (n1 > 0) { A[n1 - 1][row] += 1; A[row][n1 - 1] += 1; }
+    if (n2 > 0) { A[n2 - 1][row] -= 1; A[row][n2 - 1] -= 1; }
+    z[row] = v;
+  });
+
+  const x = gauss(A, z);
+  if (!x || !x.every(v => Number.isFinite(v) && Math.abs(v) < 1e9)) {
+    res.error = 'No se puede resolver: hay pilas conectadas directamente entre sí (en paralelo o en bucle sin nada en medio). Revisa las conexiones.';
+    return res;
+  }
+  const V = node => node === 0 ? 0 : x[node - 1];
+
+  for (const k of c.components) {
+    const va = V(I(tA(k))), vb = V(I(tB(k)));
+    let i = 0;
+    if (k.id in compV) i = x[nn + compV[k.id]];
+    else if (k.id in compR) i = (va - vb) / rs[compR[k.id]][2];
+    res.comps[k.id] = { va, vb, i, v: va - vb, p: (va - vb) * i };
+  }
+  pieces.forEach((p, j) => {
+    const [n1, n2, r] = rs[firstPiece + j];
+    const va = V(n1), vb = V(n2);
+    res.segs.push({ wireID: p.id, a: p.a, b: p.b, i: (va - vb) / r, va, vb });
+  });
+  for (const [k, node] of idx) {
+    const v = V(node);
+    res.nodeV.set(k, v);
+    res.vmax = Math.max(res.vmax, Math.abs(v));
+  }
+
+  for (const k of c.components) {
+    const r = res.comps[k.id];
+    if (k.kind === 'battery' && Math.abs(r.i) > 50)
+      res.warnings.push(`¡Cortocircuito! Por ${k.name} circulan ${fmt(Math.abs(r.i), 'A')}. Falta una resistencia o una bombilla en el camino.`);
+    if (k.kind === 'bulb' && r.p > 1.5 * k.ratedP)
+      res.warnings.push(`${k.name} recibe ${fmt(r.p, 'W')} y su potencia nominal es ${fmt(k.ratedP, 'W')}: se fundiría.`);
+    if (k.kind === 'ammeter' && Math.abs(r.i) > 50)
+      res.warnings.push(`${k.name} mide una corriente enorme: ¿está conectado en paralelo? El amperímetro va en serie.`);
+  }
+  return res;
+}
+
+/** Eliminación gaussiana con pivoteo parcial. */
+function gauss(A, b) {
+  const n = b.length;
+  for (let col = 0; col < n; col++) {
+    let piv = col, best = Math.abs(A[col][col]);
+    for (let r = col + 1; r < n; r++) if (Math.abs(A[r][col]) > best) { best = Math.abs(A[r][col]); piv = r; }
+    if (best < 1e-13) return null;
+    if (piv !== col) { [A[piv], A[col]] = [A[col], A[piv]]; [b[piv], b[col]] = [b[col], b[piv]]; }
+    const pr = A[col];
+    for (let r = col + 1; r < n; r++) {
+      const f = A[r][col] / pr[col];
+      if (f === 0) continue;
+      const row = A[r];
+      for (let k = col; k < n; k++) row[k] -= f * pr[k];
+      b[r] -= f * b[col];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let s = b[r];
+    for (let k = r + 1; k < n; k++) s -= A[r][k] * x[k];
+    x[r] = s / A[r][r];
+  }
+  return x;
+}
+
+/** 0.045, 'A' → "45 mA". */
+function fmt(v, unit, sig = 3) {
+  if (!Number.isFinite(v)) return '— ' + unit;
+  const a = Math.abs(v);
+  if (a < (unit === 'A' ? 1e-7 : 1e-6)) return '0 ' + unit;
+  const scales = [[1e9, 'G'], [1e6, 'M'], [1e3, 'k'], [1, ''], [1e-3, 'm'], [1e-6, 'µ'], [1e-9, 'n']];
+  let chosen = scales[scales.length - 1];
+  for (const s of scales) if (a >= s[0] * 0.99995) { chosen = s; break; }
+  const scaled = v / chosen[0];
+  const dec = Math.max(0, sig - 1 - Math.floor(Math.log10(Math.abs(scaled))));
+  let s = scaled.toFixed(dec);
+  if (s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
+  return s.replace('.', ',') + ' ' + chosen[1] + unit;
+}
+
+/** Número para un campo de texto: 4.5 → "4,5". */
+const plain = v => String(Number(v.toPrecision(6))).replace('.', ',');
+
+/** Lee "4,5", "10k", "4k7", "220 Ω", "2.2M", "500m"… */
+function parseValue(str) {
+  let s = String(str).trim().replace(/\s+/g, '').replace(',', '.');
+  const mult = { G: 1e9, M: 1e6, k: 1e3, K: 1e3, m: 1e-3, u: 1e-6, 'µ': 1e-6, n: 1e-9, R: 1 };
+  let m = /^(\d+)([GMkKmuµnR])(\d+)[a-zA-ZΩ]*$/.exec(s);
+  if (m) return parseFloat(m[1] + '.' + m[3]) * mult[m[2]];
+  m = /^([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)([GMkKmuµn]?)([a-zA-ZΩ]*)$/.exec(s);
+  if (!m) return NaN;
+  // "5 m" es mili, pero "5 mΩ"/"5 mA" también; una unidad sola ("9V") no lleva prefijo.
+  return parseFloat(m[1]) * (m[2] ? mult[m[2]] : 1);
+}
+
+// ============================================================
+// Estado
+// ============================================================
+let circuit = example(0);
+let result = solve(circuit);
+let tool = { type: 'select' };
+let selection = null;              // { type: 'comp' | 'wire', id }
+let placeRot = 0;
+let showValues = true, animate = true, colorByVoltage = true;
+let zoom = 1, pan = P(0, 0);
+let hover = null;                  // punto de la cuadrícula bajo el ratón
+let drag = null;
+let wireEnd = null;
+let lastClick = null;
+let spaceDown = false;
+let fileHandle = null, fileName = null;
+const undoStack = [], redoStack = [];
+
+const sameTool = (a, b) => a.type === b.type && a.kind === b.kind;
+const selectedComp = () => selection && selection.type === 'comp' ? findComp(circuit, selection.id) : null;
+
+function checkpoint() {
+  undoStack.push(clone(circuit));
+  if (undoStack.length > 300) undoStack.shift();
+  redoStack.length = 0;
+}
+
+/** Cambia el circuito y refresca todo. `fromInspector` evita reconstruir los campos que se están editando. */
+function setCircuit(c, opts = {}) {
+  circuit = c;
+  result = solve(circuit);
+  validateSelection();
+  refreshUI(opts);
+}
+
+function validateSelection() {
+  if (!selection) return;
+  const ok = selection.type === 'comp' ? !!findComp(circuit, selection.id) : circuit.wires.some(w => w.id === selection.id);
+  if (!ok) selection = null;
+}
+
+function undo() { if (!undoStack.length) return; redoStack.push(clone(circuit)); setCircuit(undoStack.pop()); }
+function redo() { if (!redoStack.length) return; undoStack.push(clone(circuit)); setCircuit(redoStack.pop()); }
+
+function updateComp(id, f, { cp = true, fromInspector = false } = {}) {
+  const c = clone(circuit);
+  const k = findComp(c, id);
+  if (!k) return;
+  const before = JSON.stringify(k);
+  f(k);
+  if (JSON.stringify(k) === before) return;
+  if (cp) checkpoint();
+  setCircuit(c, { fromInspector });
+}
+
+function select(sel) {
+  const changed = JSON.stringify(sel) !== JSON.stringify(selection);
+  selection = sel;
+  if (changed) refreshUI();
+}
+
+function setTool(t) {
+  tool = t;
+  drag = null; wireEnd = null;
+  renderPalette();
+  renderStatus();
+  canvas.focus();
+}
+
+function placeComp(kind, center) {
+  checkpoint();
+  const c = clone(circuit);
+  const d = DIRS[placeRot];
+  const id = addComp(c, kind, P(center.x - d[0] * LEN / 2, center.y - d[1] * LEN / 2), placeRot);
+  selection = { type: 'comp', id };
+  setCircuit(c);
+}
+
+function wireBetween(a, b) {
+  checkpoint();
+  const c = clone(circuit);
+  addWire(c, a, b);
+  setCircuit(c);
+}
+
+function deleteItem(sel) {
+  checkpoint();
+  const c = clone(circuit);
+  if (sel.type === 'comp') c.components = c.components.filter(k => k.id !== sel.id);
+  else c.wires = c.wires.filter(w => w.id !== sel.id);
+  setCircuit(c);
+}
+
+function deleteSelection() { if (selection) deleteItem(selection); }
+
+function rotateSelection() {
+  if (tool.type === 'place') { placeRot = (placeRot + 1) % 4; return; }
+  if (selection && selection.type === 'comp') updateComp(selection.id, rotateComp);
+}
+
+function toggleSwitch(id) { updateComp(id, k => { k.closed = !k.closed; }); }
+
+function loadCircuit(c, name = null, handle = null) {
+  checkpoint();
+  selection = null;
+  fileName = name; fileHandle = handle;
+  setCircuit(c);
+  fitView();
+  updateTitle();
+}
+
+function updateTitle() {
+  document.title = fileName ? fileName.replace(/\.json$/i, '') + ' — Circuit Maker' : 'Circuit Maker';
+}
+
+// ============================================================
+// Archivos
+// ============================================================
+const FILE_TYPES = [{ description: 'Circuito', accept: { 'application/json': ['.json'] } }];
+
+async function saveFile(saveAs = false) {
+  const json = JSON.stringify(circuit, null, 2);
+  if (window.showSaveFilePicker) {
+    try {
+      if (!fileHandle || saveAs) {
+        fileHandle = await window.showSaveFilePicker({ suggestedName: fileName || 'Circuito.json', types: FILE_TYPES });
+      }
+      const w = await fileHandle.createWritable();
+      await w.write(json);
+      await w.close();
+      fileName = fileHandle.name;
+      updateTitle();
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      console.warn(e);
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+  a.download = fileName || 'Circuito.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function openFile() {
+  if (window.showOpenFilePicker) {
+    try {
+      const [h] = await window.showOpenFilePicker({ types: FILE_TYPES });
+      const f = await h.getFile();
+      readCircuitFile(f, h);
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      console.warn(e);
+    }
+  }
+  document.getElementById('fileInput').click();
+}
+
+async function readCircuitFile(f, handle = null) {
+  try {
+    loadCircuit(normalize(JSON.parse(await f.text())), f.name, handle);
+  } catch (e) {
+    alert('No se pudo abrir el archivo: ' + e.message);
+  }
+}
+
+// ============================================================
+// Dibujo
+// ============================================================
+const canvas = document.getElementById('canvas');
+const stage = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+let dpr = 1;
+let colors = {};
+
+function readColors() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = n => cs.getPropertyValue(n).trim();
+  colors = { ink: v('--ink'), muted: v('--muted'), canvas: v('--canvas'), accent: v('--accent'), accentSoft: v('--accent-soft'), value: v('--value'), grid: v('--grid') };
+}
+
+function resize() {
+  dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(stage.clientWidth * dpr);
+  canvas.height = Math.round(stage.clientHeight * dpr);
+}
+
+function drawSymbol(g, kind, o = {}) {
+  const m = LPX / 2, ink = o.ink || colors.ink, cA = o.colorA || ink, cB = o.colorB || ink;
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const seg = (x0, y0, x1, y1, col, w = 2) => {
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1);
+    g.strokeStyle = col; g.lineWidth = w; g.stroke();
+  };
+  const circ = (cx, r) => { g.beginPath(); g.arc(cx, 0, r, 0, Math.PI * 2); };
+  switch (kind) {
+    case 'resistor':
+      seg(0, 0, m - 16, 0, cA); seg(m + 16, 0, LPX, 0, cB);
+      g.strokeStyle = ink; g.lineWidth = 2; g.strokeRect(m - 16, -7, 32, 14);
+      break;
+    case 'bulb': {
+      const b = o.brightness || 0;
+      if (b > 0.01) {
+        const rad = 14 + 28 * b;
+        const gr = g.createRadialGradient(m, 0, 6, m, 0, rad);
+        gr.addColorStop(0, `rgba(255,214,10,${0.9 * b})`);
+        gr.addColorStop(1, 'rgba(255,214,10,0)');
+        g.fillStyle = gr; circ(m, rad); g.fill();
+        g.fillStyle = `rgba(255,214,10,${0.3 + 0.65 * b})`; circ(m, 13); g.fill();
+      }
+      const col = o.overload ? '#ff3b30' : ink;
+      seg(0, 0, m - 13, 0, cA); seg(m + 13, 0, LPX, 0, cB);
+      circ(m, 13); g.strokeStyle = col; g.lineWidth = 2; g.stroke();
+      const d = 9.2;
+      seg(m - d, -d, m + d, d, col); seg(m - d, d, m + d, -d, col);
+      break;
+    }
+    case 'battery':
+      seg(0, 0, m - 4, 0, cA); seg(m + 4, 0, LPX, 0, cB);
+      seg(m - 4, -16, m - 4, 16, ink, 2.5);   // placa larga: +
+      seg(m + 4, -8, m + 4, 8, ink, 5);       // placa corta: −
+      break;
+    case 'toggle':
+      seg(0, 0, m - 14, 0, cA); seg(m + 14, 0, LPX, 0, cB);
+      g.fillStyle = ink; circ(m - 14, 2.8); g.fill(); circ(m + 14, 2.8); g.fill();
+      if (o.closed !== false) seg(m - 14, 0, m + 14, 0, ink); else seg(m - 14, 0, m + 11, -15, ink);
+      break;
+    case 'ammeter': case 'voltmeter':
+      seg(0, 0, m - 14, 0, cA); seg(m + 14, 0, LPX, 0, cB);
+      circ(m, 14); g.fillStyle = colors.canvas; g.fill(); g.strokeStyle = ink; g.lineWidth = 2; g.stroke();
+      if (o.letter) {
+        g.fillStyle = ink; g.font = '700 13px ' + FONT; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(kind === 'ammeter' ? 'A' : 'V', m, 1);
+      }
+      break;
+  }
+}
+
+function vColor(v) {
+  if (v == null || !colorByVoltage || result.error || result.vmax <= 1e-6) return colors.ink;
+  const t = Math.min(1, Math.max(0, Math.abs(v) / result.vmax));
+  return `hsl(${Math.round(223 * (1 - t))}, 78%, 52%)`;
+}
+
+function paramText(c) {
+  switch (c.kind) {
+    case 'battery': return c.internalR > 0 ? `${fmt(c.voltage, 'V')} · r ${fmt(c.internalR, 'Ω')}` : fmt(c.voltage, 'V');
+    case 'resistor': return fmt(c.resistance, 'Ω');
+    case 'bulb': return `${fmt(c.ratedV, 'V')} / ${fmt(c.ratedP, 'W')}`;
+    case 'toggle': return c.closed ? 'cerrado' : 'abierto';
+    default: return '';
+  }
+}
+
+function resultText(c) {
+  const r = result.comps[c.id];
+  if (result.error || !r) return null;
+  switch (c.kind) {
+    case 'battery': return 'I = ' + fmt(Math.abs(r.i), 'A');
+    case 'resistor': case 'bulb': return `${fmt(Math.abs(r.v), 'V')} · ${fmt(Math.abs(r.i), 'A')}`;
+    case 'toggle': return c.closed ? fmt(Math.abs(r.i), 'A') : fmt(Math.abs(r.v), 'V');
+    case 'ammeter': return fmt(Math.abs(r.i), 'A');
+    case 'voltmeter': return fmt(r.v, 'V');
+  }
+}
+
+function line(a, b, color, width, dash) {
+  ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y);
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round';
+  ctx.setLineDash(dash || []); ctx.stroke(); ctx.setLineDash([]);
+}
+
+function dot(p, r, color, stroke) {
+  ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+  if (stroke) { ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke(); }
+  else { ctx.fillStyle = color; ctx.fill(); }
+}
+
+function drawComponent(c, ghost = false) {
+  const r = ghost ? null : result.comps[c.id];
+  const ok = !result.error;
+  const a = px(tA(c));
+  ctx.save();
+  if (ghost) ctx.globalAlpha = 0.4;
+  ctx.translate(a.x, a.y);
+  ctx.rotate(rotIdx(c) * Math.PI / 2);
+  if (!ghost && selection && selection.type === 'comp' && selection.id === c.id) {
+    ctx.beginPath(); ctx.roundRect(-8, -22, LPX + 16, 44, 9);
+    ctx.fillStyle = colors.accentSoft; ctx.fill();
+    ctx.setLineDash([5, 3]); ctx.strokeStyle = colors.accent; ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]);
+  }
+  let bright = 0, over = false;
+  if (c.kind === 'bulb' && r && ok) { bright = Math.min(1, Math.max(0, r.p / c.ratedP)); over = r.p > 1.5 * c.ratedP; }
+  drawSymbol(ctx, c.kind, {
+    closed: c.closed, brightness: bright, overload: over,
+    colorA: ok && r ? vColor(r.va) : colors.ink, colorB: ok && r ? vColor(r.vb) : colors.ink,
+  });
+  ctx.restore();
+
+  // Textos que no giran
+  ctx.save();
+  if (ghost) ctx.globalAlpha = 0.4;
+  ctx.fillStyle = colors.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (c.kind === 'ammeter' || c.kind === 'voltmeter') {
+    const m = midPx(c);
+    ctx.font = '700 13px ' + FONT;
+    ctx.fillText(c.kind === 'ammeter' ? 'A' : 'V', m.x, m.y + 1);
+  } else if (c.kind === 'battery') {
+    ctx.font = '700 12px ' + FONT;
+    const p1 = worldOf(c, LPX / 2 - 13, -12), p2 = worldOf(c, LPX / 2 + 13, -12);
+    ctx.fillText('+', p1.x, p1.y); ctx.fillText('−', p2.x, p2.y);
+  }
+  ctx.restore();
+}
+
+function drawLabels(c) {
+  const mid = midPx(c), meter = c.kind === 'ammeter' || c.kind === 'voltmeter';
+  const param = paramText(c), val = resultText(c);
+  const fName = '600 11px ' + FONT, fParam = '11px ' + FONT;
+  ctx.font = fName; const w1 = ctx.measureText(c.name).width;
+  const pTxt = param ? '  ' + param : '';
+  ctx.font = fParam; const w2 = ctx.measureText(pTxt).width;
+  let tx, ty, vx, vy, align;
+  if (isVertical(c)) { tx = mid.x + 22; ty = mid.y - 4; vx = mid.x + 22; vy = mid.y + 2; align = 'left'; }
+  else { tx = mid.x - (w1 + w2) / 2; ty = mid.y - 26; vx = mid.x; vy = mid.y + 22; align = 'center'; }
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = colors.ink;
+  ctx.font = fName; ctx.fillText(c.name, tx, ty);
+  ctx.font = fParam; ctx.fillText(pTxt, tx + w1, ty);
+  if (val) {
+    ctx.font = (meter ? '700 13px ' : '500 11px ') + FONT;
+    ctx.fillStyle = colors.value; ctx.textAlign = align; ctx.textBaseline = 'top';
+    ctx.fillText(val, vx, vy);
+  }
+}
+
+function currentDots(from, to, i, time) {
+  const ai = Math.abs(i);
+  if (ai <= 1e-6) return;
+  const len = Math.hypot(to.x - from.x, to.y - from.y);
+  if (len <= 1) return;
+  const speed = Math.min(170, 22 * Math.log10(1 + ai * 1000) + 6), spacing = 16;
+  const ux = (to.x - from.x) / len, uy = (to.y - from.y) / len;
+  ctx.fillStyle = '#ff9e0d';
+  for (let s = (time * speed) % spacing; s < len; s += spacing) {
+    const d = i > 0 ? s : len - s;
+    ctx.beginPath(); ctx.arc(from.x + ux * d, from.y + uy * d, 2.4, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawGrid(W, H) {
+  const step = GRID;
+  const x0 = Math.floor(-pan.x / zoom / step) * step, x1 = (W - pan.x) / zoom;
+  const y0 = Math.floor(-pan.y / zoom / step) * step, y1 = (H - pan.y) / zoom;
+  const s = 1.5 / zoom;
+  ctx.beginPath();
+  for (let y = y0; y <= y1; y += step) for (let x = x0; x <= x1; x += step) ctx.rect(x - s / 2, y - s / 2, s, s);
+  ctx.fillStyle = colors.grid; ctx.fill();
+}
+
+function draw(now) {
+  const W = stage.clientWidth, H = stage.clientHeight;
+  const time = now / 1000;
+  const ok = !result.error;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = colors.canvas; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * pan.x, dpr * pan.y);
+  drawGrid(W, H);
+
+  // Cables
+  if (selection && selection.type === 'wire') {
+    const w = circuit.wires.find(w => w.id === selection.id);
+    if (w) line(px(w.a), px(w.b), colors.accentSoft, 10);
+  }
+  if (ok) for (const s of result.segs) line(px(s.a), px(s.b), vColor((s.va + s.vb) / 2), 2.5);
+  else for (const w of circuit.wires) line(px(w.a), px(w.b), colors.ink, 2.5);
+
+  for (const c of circuit.components) drawComponent(c);
+
+  // Uniones y bornes sueltos
+  for (const [k, d] of result.degree) {
+    const [x, y] = k.split(',').map(Number), p = px(P(x, y));
+    if (d >= 3) dot(p, 4, vColor(result.nodeV.get(k)));
+    else if (d === 1) dot(p, 3.5, 'rgba(255,59,48,.75)', true);
+  }
+
+  if (animate && ok) {
+    for (const s of result.segs) currentDots(px(s.a), px(s.b), s.i, time);
+    for (const c of circuit.components) {
+      if (c.kind === 'voltmeter') continue;
+      const r = result.comps[c.id];
+      if (r) currentDots(px(tA(c)), px(tB(c)), r.i, time);
+    }
+  }
+
+  if (showValues) for (const c of circuit.components) drawLabels(c);
+
+  // Vista previa
+  if (tool.type === 'place' && hover && !drag) {
+    const d = DIRS[placeRot];
+    drawComponent({ kind: tool.kind, name: '', pos: P(hover.x - d[0] * 2, hover.y - d[1] * 2), rot: placeRot, closed: true, ratedP: 1 }, true);
+  }
+  if (drag && drag.type === 'wire' && wireEnd) {
+    for (const [a, b] of route(drag.from, wireEnd)) line(px(a), px(b), colors.accent, 2.5, [6, 4]);
+  }
+  if (hover && (tool.type === 'wire' || (tool.type === 'select' && terminalNear(circuit, px(hover), 1)))) {
+    dot(px(hover), 6, colors.accent, true);
+  }
+}
+
+function loop(now) {
+  draw(now);
+  requestAnimationFrame(loop);
+}
+
+// ============================================================
+// Interacción con el lienzo
+// ============================================================
+function toWorld(e) {
+  const r = canvas.getBoundingClientRect();
+  return P((e.clientX - r.left - pan.x) / zoom, (e.clientY - r.top - pan.y) / zoom);
+}
+
+canvas.tabIndex = 0;
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('pointerdown', e => {
+  canvas.focus();
+  canvas.setPointerCapture(e.pointerId);
+  closeMenus();
+  if (e.button === 1 || e.button === 2 || spaceDown) {
+    drag = { type: 'pan', sx: e.clientX, sy: e.clientY, pan0: { ...pan } };
+    canvas.style.cursor = 'grabbing';
+    return;
+  }
+  if (e.button !== 0) return;
+  begin(toWorld(e));
+});
+
+canvas.addEventListener('pointermove', e => {
+  const w = toWorld(e);
+  const h = snap(w);
+  if (!hover || !same(h, hover)) { hover = h; renderStatus(); }
+  if (drag) update(e, w); else updateCursor(w);
+});
+
+canvas.addEventListener('pointerup', e => {
+  if (drag) end(e, toWorld(e));
+  drag = null; wireEnd = null;
+  updateCursor(toWorld(e));
+});
+
+canvas.addEventListener('pointerleave', () => { if (!drag) { hover = null; renderStatus(); } });
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    const r = canvas.getBoundingClientRect();
+    zoomAt(zoom * Math.exp(-e.deltaY * 0.0025), e.clientX - r.left, e.clientY - r.top);
+  } else {
+    const k = e.deltaMode === 1 ? 20 : 1;
+    pan.x -= (e.shiftKey ? e.deltaY : e.deltaX) * k;
+    pan.y -= (e.shiftKey ? 0 : e.deltaY) * k;
+  }
+}, { passive: false });
+
+function updateCursor(w) {
+  let cur = 'default';
+  if (spaceDown) cur = 'grab';
+  else if (tool.type === 'wire' || tool.type === 'place') cur = 'crosshair';
+  else if (tool.type === 'delete') cur = (hitComponent(circuit, w) || hitWire(circuit, w)) ? 'pointer' : 'default';
+  else if (terminalNear(circuit, w)) cur = 'crosshair';
+  else if (hitComponent(circuit, w) || hitWire(circuit, w)) cur = 'move';
+  canvas.style.cursor = cur;
+}
+
+function begin(w) {
+  const g = snap(w);
+  switch (tool.type) {
+    case 'wire': {
+      const start = terminalNear(circuit, w, 10) || g;
+      drag = { type: 'wire', from: start }; wireEnd = start;
+      break;
+    }
+    case 'select': {
+      const t = terminalNear(circuit, w);
+      if (t) { drag = { type: 'wire', from: t }; wireEnd = t; break; }
+      const c = hitComponent(circuit, w);
+      if (c) { select({ type: 'comp', id: c.id }); drag = { type: 'moveComp', id: c.id, origin: clone(circuit), start: g, moved: false }; break; }
+      const wi = hitWire(circuit, w);
+      if (wi) { select({ type: 'wire', id: wi.id }); drag = { type: 'moveWire', id: wi.id, origin: clone(circuit), start: g, moved: false }; break; }
+      select(null);
+      drag = { type: 'none' };
+      break;
+    }
+    default:
+      drag = { type: 'none' };
+  }
+}
+
+function update(e, w) {
+  const g = snap(w);
+  switch (drag.type) {
+    case 'pan':
+      pan = P(drag.pan0.x + e.clientX - drag.sx, drag.pan0.y + e.clientY - drag.sy);
+      break;
+    case 'wire':
+      wireEnd = g;
+      break;
+    case 'moveComp': case 'moveWire': {
+      const d = sub(g, drag.start);
+      if (d.x === 0 && d.y === 0 && !drag.moved) return;
+      if (!drag.moved) { checkpoint(); drag.moved = true; }
+      setCircuit(drag.type === 'moveComp' ? movingComponent(drag.origin, drag.id, d) : movingWire(drag.origin, drag.id, d));
+      break;
+    }
+  }
+}
+
+function end(e, w) {
+  const g = snap(w);
+  switch (drag.type) {
+    case 'pan': break;
+    case 'wire':
+      if (!same(g, drag.from)) wireBetween(drag.from, g);
+      else if (tool.type === 'select') {
+        const c = hitComponent(circuit, w);
+        if (c) clicked(c);
+        else { const wi = hitWire(circuit, w); select(wi ? { type: 'wire', id: wi.id } : null); }
+      }
+      break;
+    case 'moveComp':
+      if (drag.moved) cleanupWires();
+      else { const c = findComp(circuit, drag.id); if (c) clicked(c); }
+      break;
+    case 'moveWire':
+      if (drag.moved) cleanupWires();
+      break;
+    default:
+      if (tool.type === 'place') placeComp(tool.kind, g);
+      else if (tool.type === 'delete') {
+        const c = hitComponent(circuit, w);
+        if (c) deleteItem({ type: 'comp', id: c.id });
+        else { const wi = hitWire(circuit, w); if (wi) deleteItem({ type: 'wire', id: wi.id }); }
+      }
+  }
+}
+
+function cleanupWires() {
+  if (circuit.wires.some(w => same(w.a, w.b))) {
+    const c = clone(circuit);
+    c.wires = c.wires.filter(w => !same(w.a, w.b));
+    setCircuit(c);
+  }
+}
+
+/** Clic: selecciona; doble clic en un interruptor lo abre o cierra. */
+function clicked(c) {
+  select({ type: 'comp', id: c.id });
+  const now = performance.now();
+  if (c.kind === 'toggle' && lastClick && lastClick.id === c.id && now - lastClick.t < 400) {
+    toggleSwitch(c.id);
+    lastClick = null;
+  } else {
+    lastClick = { id: c.id, t: now };
+  }
+}
+
+function zoomAt(z, sx, sy) {
+  z = Math.min(3, Math.max(0.4, z));
+  pan = P(sx - (sx - pan.x) * z / zoom, sy - (sy - pan.y) * z / zoom);
+  zoom = z;
+  document.getElementById('zoomLabel').textContent = Math.round(zoom * 100) + ' %';
+}
+const zoomCenter = f => zoomAt(zoom * f, stage.clientWidth / 2, stage.clientHeight / 2);
+
+function fitView() {
+  const pts = [];
+  for (const c of circuit.components) pts.push(px(tA(c)), px(tB(c)));
+  for (const w of circuit.wires) pts.push(px(w.a), px(w.b));
+  const W = stage.clientWidth, H = stage.clientHeight;
+  if (!pts.length) { zoom = 1; pan = P(0, 0); zoomAt(1, 0, 0); return; }
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const minX = Math.min(...xs) - 90, maxX = Math.max(...xs) + 150, minY = Math.min(...ys) - 70, maxY = Math.max(...ys) + 70;
+  const z = Math.min(1.6, Math.max(0.4, Math.min(W / (maxX - minX), H / (maxY - minY))));
+  zoom = z;
+  pan = P((W - (maxX - minX) * z) / 2 - minX * z, (H - (maxY - minY) * z) / 2 - minY * z);
+  document.getElementById('zoomLabel').textContent = Math.round(zoom * 100) + ' %';
+}
+
+// ============================================================
+// Teclado
+// ============================================================
+window.addEventListener('keydown', e => {
+  const inField = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName);
+  const mod = e.ctrlKey || e.metaKey;
+  const k = e.key.toLowerCase();
+  if (mod) {
+    if (k === 's') { e.preventDefault(); saveFile(e.shiftKey); return; }
+    if (k === 'o') { e.preventDefault(); openFile(); return; }
+    if (k === 'n') { e.preventDefault(); newFile(); return; }
+    if (k === '+' || k === '=') { e.preventDefault(); zoomCenter(1.25); return; }
+    if (k === '-') { e.preventDefault(); zoomCenter(0.8); return; }
+    if (k === '0') { e.preventDefault(); zoomAt(1, stage.clientWidth / 2, stage.clientHeight / 2); return; }
+    if (inField) return;
+    if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
+    if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return; }
+    if (k === 'r') { e.preventDefault(); rotateSelection(); return; }
+    return;
+  }
+  if (inField) { if (e.key === 'Escape') document.activeElement.blur(); return; }
+  if (e.key === ' ') {
+    e.preventDefault();
+    if (!spaceDown) { spaceDown = true; canvas.style.cursor = 'grab'; }
+    const c = selectedComp();
+    if (c && c.kind === 'toggle' && !e.repeat) toggleSwitch(c.id);
+    return;
+  }
+  switch (e.key) {
+    case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); return;
+    case 'Escape': setTool({ type: 'select' }); closeMenus(); return;
+  }
+  switch (k) {
+    case 'r': rotateSelection(); break;
+    case 'w': case 'c': setTool({ type: 'wire' }); break;
+    case 'v': case 'm': setTool({ type: 'select' }); break;
+    case 'd': case 'b': setTool({ type: 'delete' }); break;
+    case '1': case '2': case '3': case '4': case '5': case '6':
+      setTool({ type: 'place', kind: KINDS[Number(k) - 1].k }); break;
+  }
+});
+window.addEventListener('keyup', e => { if (e.key === ' ') { spaceDown = false; canvas.style.cursor = 'default'; } });
+
+function newFile() { loadCircuit({ components: [], wires: [] }); }
+
+// ============================================================
+// Interfaz: paleta, inspector, barra de estado
+// ============================================================
+const esc = s => String(s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+
+function iconCanvas(kind, cls = '') {
+  return `<canvas class="${cls}" data-icon="${kind}" width="100" height="48"></canvas>`;
+}
+
+function paintIcons(root = document) {
+  for (const cv of root.querySelectorAll('canvas[data-icon]')) {
+    const g = cv.getContext('2d');
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.clearRect(0, 0, cv.width, cv.height);
+    const s = Math.min(cv.width / (LPX + 4), cv.height / 40);
+    g.translate((cv.width - LPX * s) / 2, cv.height / 2);
+    g.scale(s, s);
+    const savedCanvas = colors.canvas;
+    drawSymbol(g, cv.dataset.icon, { brightness: cv.dataset.icon === 'bulb' ? 0.6 : 0, letter: true });
+    colors.canvas = savedCanvas;
+  }
+}
+
+function renderPalette() {
+  const pal = document.getElementById('palette');
+  const btn = (t, label, key, inner) =>
+    `<button class="tool ${sameTool(tool, t) ? 'on' : ''}" data-tool='${JSON.stringify(t)}' title="${label} (${key})">${inner}<span>${label}</span></button>`;
+  pal.innerHTML =
+    btn({ type: 'select' }, 'Mover', 'V', '<div class="glyph">⬉</div>') +
+    btn({ type: 'wire' }, 'Cable', 'W', '<div class="glyph">╱</div>') +
+    '<hr>' +
+    KINDS.map((k, i) => btn({ type: 'place', kind: k.k }, k.title, i + 1, iconCanvas(k.k))).join('') +
+    '<hr>' +
+    btn({ type: 'delete' }, 'Borrar', 'D', '<div class="glyph">⌫</div>');
+  paintIcons(pal);
+}
+
+document.getElementById('palette').addEventListener('click', e => {
+  const b = e.target.closest('[data-tool]');
+  if (b) setTool(JSON.parse(b.dataset.tool));
+});
+
+function renderStatus() {
+  const hints = {
+    select: 'Arrastra para mover · arrastra desde un borne para tender un cable · doble clic en un interruptor para abrirlo/cerrarlo · R gira · Supr borra · rueda o botón derecho para desplazarte',
+    wire: 'Arrastra de un punto a otro para tender un cable · Esc para terminar',
+    delete: 'Haz clic sobre un componente o cable para borrarlo · Esc para terminar',
+    place: `Haz clic para colocar ${tool.kind ? KIND[tool.kind].art : ''} · R gira · Esc para terminar`,
+  };
+  document.getElementById('hint').textContent = hints[tool.type];
+  const v = hover && !result.error ? result.nodeV.get(keyOf(hover)) : undefined;
+  document.getElementById('nodeInfo').innerHTML = v !== undefined ? `<b>Tensión del nodo: ${fmt(v, 'V')}</b>` : '';
+  document.getElementById('coords').textContent = hover ? `(${hover.x}, ${hover.y})` : '';
+}
+
+function refreshUI(opts = {}) {
+  renderNotices();
+  if (!opts.fromInspector) renderSelection();
+  renderResults();
+  renderSummary();
+  renderStatus();
+  document.getElementById('bUndo').disabled = !undoStack.length;
+  document.getElementById('bRedo').disabled = !redoStack.length;
+}
+
+function renderNotices() {
+  let h = '';
+  if (result.error) h += `<div class="notice err">⛔<div>${esc(result.error)}</div></div>`;
+  for (const w of result.warnings) h += `<div class="notice warn">⚠️<div>${esc(w)}</div></div>`;
+  document.getElementById('notices').innerHTML = h;
+}
+
+const valRow = (label, value) => `<div class="val"><span>${label}</span><span>${value}</span></div>`;
+const numRow = (label, field, value, unit, min) =>
+  `<div class="row"><label>${label}</label><input class="num" data-field="${field}" data-min="${min}" value="${plain(value)}"><span class="unit">${unit}</span></div>`;
+const chips = (field, values, unit) =>
+  `<div class="chips">${values.map(v => `<button data-preset="${field}" data-value="${v}">${fmt(v, unit)}</button>`).join('')}</div>`;
+const hintP = t => `<div class="muted small">${t}</div>`;
+
+let renderedSelKey = null;
+
+function renderSelection() {
+  const el = document.getElementById('sel');
+  if (!selection) {
+    el.innerHTML = `<h3>Nada seleccionado</h3>${hintP('Haz clic en un componente para ver y cambiar sus valores. Elige una pieza a la izquierda y haz clic en el lienzo para colocarla; arrastra desde un borne para unirla con un cable.')}<div id="results"></div>`;
+    return;
+  }
+  if (selection.type === 'wire') {
+    el.innerHTML = `<h3>Cable</h3><div id="results"></div>
+      ${hintP('Un cable ideal une puntos con la misma tensión. Si pasa por el borne de un componente, queda conectado a él.')}
+      <div class="actions" style="margin-top:10px"><span></span><button class="danger" data-action="delete">Eliminar</button></div>`;
+    return;
+  }
+  const c = selectedComp();
+  if (!c) { el.innerHTML = ''; return; }
+  let params = '';
+  switch (c.kind) {
+    case 'battery':
+      params = numRow('Tensión', 'voltage', c.voltage, 'V', -10000) +
+        `<input type="range" data-slider="voltage" min="0" max="48" step="0.5" value="${c.voltage}">` +
+        chips('voltage', [1.5, 4.5, 9, 12, 24], 'V') +
+        numRow('Resistencia interna', 'internalR', c.internalR, 'Ω', 0) +
+        hintP('El borne + es el de la placa larga. 0 Ω = pila ideal.');
+      break;
+    case 'resistor':
+      params = numRow('Resistencia', 'resistance', c.resistance, 'Ω', 1e-3) +
+        `<input type="range" data-slider="logR" min="0" max="6" step="0.01" value="${Math.log10(Math.max(1, c.resistance))}">` +
+        chips('resistance', [10, 100, 220, 1000, 10000], 'Ω') +
+        hintP('Puedes escribir 4k7, 10k, 2,2M…');
+      break;
+    case 'bulb':
+      params = numRow('Tensión nominal', 'ratedV', c.ratedV, 'V', 0.01) +
+        numRow('Potencia nominal', 'ratedP', c.ratedP, 'W', 0.001) +
+        `<div id="bulbR">${valRow('Resistencia del filamento', fmt(bulbR(c), 'Ω'))}</div>` +
+        hintP('Brilla al 100 % cuando recibe su potencia nominal. Por encima del 150 % se funde.');
+      break;
+    case 'toggle':
+      params = `<label class="check"><input type="checkbox" data-field="closed" ${c.closed ? 'checked' : ''}> Cerrado (deja pasar la corriente)</label>` +
+        hintP('También puedes hacer doble clic sobre él o pulsar la barra espaciadora.');
+      break;
+    case 'ammeter':
+      params = hintP('Amperímetro ideal (resistencia ≈ 0). Mide la corriente: se conecta en serie.');
+      break;
+    case 'voltmeter':
+      params = hintP('Voltímetro ideal (resistencia muy alta). Mide la tensión: se conecta en paralelo.');
+      break;
+  }
+  el.innerHTML = `
+    <div class="head">${iconCanvas(c.kind)}<div style="flex:1"><input class="name" data-field="name" value="${esc(c.name)}" spellcheck="false"><div class="muted small" style="padding-left:5px">${KIND[c.kind].title}</div></div></div>
+    <div class="box"><div class="title">Parámetros</div>${params}</div>
+    <div id="results"></div>
+    <div class="actions"><button data-action="rotate">⟳ Girar</button><button class="danger" data-action="delete">Eliminar</button></div>`;
+  paintIcons(el);
+}
+
+function renderResults() {
+  const el = document.getElementById('results');
+  if (!el || !selection || result.error) { if (el) el.innerHTML = ''; return; }
+  if (selection.type === 'wire') {
+    const segs = result.segs.filter(s => s.wireID === selection.id);
+    el.innerHTML = segs.length
+      ? valRow('Tensión del cable', fmt(segs[0].va, 'V')) + valRow('Corriente', fmt(Math.max(...segs.map(s => Math.abs(s.i))), 'A'))
+      : '';
+    return;
+  }
+  const c = selectedComp(), r = c && result.comps[c.id];
+  if (!r) { el.innerHTML = ''; return; }
+  let h = '';
+  switch (c.kind) {
+    case 'battery':
+      h = valRow('Tensión en bornes', fmt(r.v, 'V')) + valRow('Corriente', fmt(Math.abs(r.i), 'A')) +
+        valRow(r.p <= 0 ? 'Potencia entregada' : 'Potencia absorbida', fmt(Math.abs(r.p), 'W')) +
+        (c.internalR > 0 ? valRow('Pérdidas internas', fmt(r.i * r.i * c.internalR, 'W')) : '');
+      break;
+    case 'ammeter': h = `<div class="big">${fmt(Math.abs(r.i), 'A')}</div>`; break;
+    case 'voltmeter': h = `<div class="big">${fmt(r.v, 'V')}</div>`; break;
+    case 'toggle':
+      h = c.closed ? valRow('Corriente', fmt(Math.abs(r.i), 'A'))
+        : valRow('Tensión entre bornes', fmt(Math.abs(r.v), 'V')) + valRow('Corriente', '0 A');
+      break;
+    default: {
+      const R = c.kind === 'bulb' ? bulbR(c) : c.resistance;
+      h = valRow('Tensión (V)', fmt(Math.abs(r.v), 'V')) + valRow('Intensidad (I)', fmt(Math.abs(r.i), 'A')) +
+        valRow('Potencia (P)', fmt(Math.abs(r.p), 'W')) +
+        valRow('Ley de Ohm', `${fmt(Math.abs(r.i), 'A')} × ${fmt(R, 'Ω')} = ${fmt(Math.abs(r.i) * R, 'V')}`);
+      if (c.kind === 'bulb') {
+        const pct = r.p / c.ratedP, over = pct > 1.5;
+        h += `<div class="bar ${over ? 'over' : ''}"><div style="width:${Math.min(100, Math.max(0, pct * 100))}%"></div></div>
+          <div class="small" style="color:${over ? 'var(--err)' : 'var(--muted)'}">${over ? '¡Se fundiría!' : `Brillo: ${Math.round(pct * 100)} % de su potencia nominal`}</div>`;
+      }
+    }
+  }
+  el.innerHTML = `<div class="box"><div class="title">Resultados</div>${h}</div>`;
+  const br = document.getElementById('bulbR');
+  if (br && c.kind === 'bulb') br.innerHTML = valRow('Resistencia del filamento', fmt(bulbR(c), 'Ω'));
+}
+
+function renderSummary() {
+  const el = document.getElementById('summary');
+  const comps = circuit.components;
+  let h = '<h3>Todo el circuito</h3>';
+  if (!comps.length) { el.innerHTML = h + hintP('Añade componentes desde la barra de la izquierda.'); return; }
+  if (result.error) { el.innerHTML = h; return; }
+  h += '<table class="sum"><tr><th></th><th>V</th><th>I</th><th>P</th></tr>';
+  for (const c of comps) {
+    const r = result.comps[c.id] || { v: 0, i: 0, p: 0 };
+    const meter = c.kind === 'ammeter' || c.kind === 'voltmeter';
+    const cur = selection && selection.id === c.id ? 'cur' : '';
+    h += `<tr class="rowsel ${cur}" data-select="${c.id}"><td><b>${esc(c.name)}</b></td><td>${fmt(Math.abs(r.v), 'V')}</td><td>${fmt(Math.abs(r.i), 'A')}</td><td>${meter ? '—' : fmt(Math.abs(r.p), 'W')}</td></tr>`;
+  }
+  h += '</table><hr class="div">';
+  const bats = comps.filter(c => c.kind === 'battery');
+  const supplied = bats.reduce((s, c) => s + Math.max(0, -(result.comps[c.id]?.p || 0)), 0);
+  const consumed = comps.filter(c => c.kind !== 'battery').reduce((s, c) => s + Math.max(0, result.comps[c.id]?.p || 0), 0);
+  h += valRow('Potencia entregada', fmt(supplied, 'W')) + valRow('Potencia consumida', fmt(consumed, 'W'));
+  if (bats.length === 1) {
+    const r = result.comps[bats[0].id];
+    if (r && Math.abs(r.i) > 1e-7) h += valRow('Resistencia equivalente', fmt(Math.abs(r.v / r.i), 'Ω'));
+  }
+  if (result.groundName) h += `<div class="muted small" style="margin-top:8px">Las tensiones de nodo (abajo, al pasar el ratón) se miden respecto al borne − de ${esc(result.groundName)}.</div>`;
+  el.innerHTML = h;
+}
+
+// Eventos del inspector
+const inspector = document.getElementById('inspector');
+
+inspector.addEventListener('click', e => {
+  const t = e.target;
+  const row = t.closest('[data-select]');
+  if (row) { select({ type: 'comp', id: row.dataset.select }); return; }
+  const preset = t.closest('[data-preset]');
+  if (preset && selection) {
+    updateComp(selection.id, k => { k[preset.dataset.preset] = Number(preset.dataset.value); });
+    return;
+  }
+  const act = t.closest('[data-action]');
+  if (act) { if (act.dataset.action === 'delete') deleteSelection(); else rotateSelection(); }
+});
+
+inspector.addEventListener('change', e => {
+  const t = e.target;
+  if (!selection || !t.dataset.field) return;
+  const f = t.dataset.field;
+  if (f === 'closed') { updateComp(selection.id, k => { k.closed = t.checked; }); return; }
+  if (f === 'name') return;
+  const v = parseValue(t.value);
+  if (!Number.isFinite(v)) { t.classList.add('bad'); return; }
+  t.classList.remove('bad');
+  const lo = Number(t.dataset.min);
+  updateComp(selection.id, k => { k[f] = Math.max(lo, v); });
+});
+
+inspector.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.matches('input')) e.target.blur();
+});
+
+inspector.addEventListener('input', e => {
+  const t = e.target;
+  if (!selection) return;
+  if (t.dataset.field === 'name') {
+    updateComp(selection.id, k => { k.name = t.value; }, { cp: false, fromInspector: true });
+    return;
+  }
+  if (t.dataset.slider) {
+    const v = t.dataset.slider === 'logR' ? roundNice(Math.pow(10, Number(t.value))) : Number(t.value);
+    const field = t.dataset.slider === 'logR' ? 'resistance' : t.dataset.slider;
+    updateComp(selection.id, k => { k[field] = v; }, { cp: false, fromInspector: true });
+    const num = inspector.querySelector(`input.num[data-field="${field}"]`);
+    if (num) num.value = plain(v);
+  }
+});
+
+inspector.addEventListener('pointerdown', e => {
+  if (e.target.dataset.slider) checkpoint();
+});
+inspector.addEventListener('focusin', e => {
+  if (e.target.dataset.field === 'name') checkpoint();
+});
+
+function roundNice(v) {
+  if (v <= 0) return v;
+  const f = Math.pow(10, Math.floor(Math.log10(v)) - 1);
+  return Math.round(v / f) * f;
+}
+
+// ============================================================
+// Barra superior
+// ============================================================
+const $ = id => document.getElementById(id);
+$('bNew').onclick = newFile;
+$('bOpen').onclick = openFile;
+$('bSave').onclick = () => saveFile(false);
+$('bUndo').onclick = undo;
+$('bRedo').onclick = redo;
+$('bZoomIn').onclick = () => zoomCenter(1.25);
+$('bZoomOut').onclick = () => zoomCenter(0.8);
+$('bFit').onclick = fitView;
+$('fileInput').onchange = e => { const f = e.target.files[0]; if (f) readCircuitFile(f); e.target.value = ''; };
+
+function bindToggle(id, get, set) {
+  const b = $(id);
+  b.onclick = () => { set(!get()); b.classList.toggle('on', get()); };
+}
+bindToggle('tValues', () => showValues, v => { showValues = v; });
+bindToggle('tAnimate', () => animate, v => { animate = v; });
+bindToggle('tColors', () => colorByVoltage, v => { colorByVoltage = v; });
+
+function closeMenus() { $('examplesMenu').classList.remove('open'); }
+$('bExamples').onclick = e => { e.stopPropagation(); $('examplesMenu').classList.toggle('open'); };
+$('examplesMenu').onclick = e => {
+  const b = e.target.closest('[data-example]');
+  if (b) { loadCircuit(example(Number(b.dataset.example))); closeMenus(); }
+};
+document.addEventListener('click', e => { if (!e.target.closest('.menu-wrap')) closeMenus(); });
+
+// Arrastrar un .json sobre la ventana lo abre.
+window.addEventListener('dragover', e => e.preventDefault());
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  const f = e.dataTransfer.files[0];
+  if (f) readCircuitFile(f);
+});
+
+// ============================================================
+// Arranque
+// ============================================================
+function paintLogo() {
+  const g = $('logo').getContext('2d');
+  g.clearRect(0, 0, 44, 44);
+  g.save(); g.translate(2, 22); g.scale(40 / LPX, 40 / LPX);
+  drawSymbol(g, 'bulb', { brightness: 0.8 });
+  g.restore();
+}
+
+function onTheme() {
+  readColors();
+  renderPalette();
+  renderSelection();
+  renderResults();
+  paintLogo();
+}
+
+window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', onTheme);
+window.addEventListener('resize', resize);
+
+// Versión de escritorio (Electron): actualizaciones desde GitHub.
+if (window.circuitMaker) {
+  const b = $('bUpdates');
+  b.hidden = false;
+  b.onclick = () => window.circuitMaker.checkForUpdates();
+  window.circuitMaker.version().then(v => { $('logo').parentElement.title = 'Versión ' + v; });
+  window.circuitMaker.onUpdateStatus(t => { $('updateInfo').textContent = t; });
+}
+
+readColors();
+resize();
+renderPalette();
+refreshUI();
+paintLogo();
+fitView();
+canvas.focus();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

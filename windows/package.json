@@ -1,0 +1,8 @@
+{
+  "name": "circuit-maker-windows-build",
+  "private": true,
+  "description": "Herramientas para empaquetar Circuit Maker para Windows.",
+  "devDependencies": {
+    "@electron/packager": "^20.3.0"
+  }
+}

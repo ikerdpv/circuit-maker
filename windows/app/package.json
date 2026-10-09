@@ -4,5 +4,6 @@
   "version": "1.0.0",
   "description": "Editor de circuitos en modo esquema con cálculo de tensiones, corrientes y potencias.",
   "main": "main.js",
-  "author": "ikerdpv"
+  "author": "ikerdpv",
+  "license": "MIT"
 }

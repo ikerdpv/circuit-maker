@@ -54,3 +54,7 @@ El cálculo es un análisis nodal modificado (MNA) en corriente continua: `Sourc
 ```
 
 El script cambia el número de versión en las dos apps, las compila, sube los cambios y crea una *release* en GitHub con los dos zips. Al abrirse, las apps instaladas consultan `releases/latest`. Si encuentran una versión más nueva, preguntan, la descargan, sustituyen los archivos y se reinician.
+
+## Licencia
+
+[MIT](LICENSE): puedes usar, copiar, modificar y distribuir el código libremente, siempre que mantengas el aviso de copyright.

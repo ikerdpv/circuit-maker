@@ -1,0 +1,17 @@
+{
+  "name": "Circuit Maker",
+  "short_name": "Circuit Maker",
+  "description": "Editor de circuitos eléctricos en modo esquema: calcula tensiones, corrientes y potencias en tiempo real.",
+  "lang": "es",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#ffffff",
+  "categories": ["education", "utilities"],
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

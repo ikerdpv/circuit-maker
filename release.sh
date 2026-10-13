@@ -1,7 +1,7 @@
 #!/bin/bash
-# Publica una versión nueva de Circuit Maker para Mac y Windows.
+# Publica una versión nueva de Circuit Maker para Mac, Windows y la web (ChromeOS).
 #   ./release.sh 1.1.0 "Qué ha cambiado"
-# Las apps instaladas la detectan al abrirse y se actualizan solas.
+# Las apps instaladas la detectan al abrirse y se actualizan solas; la web se publica al subir docs/.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -22,6 +22,7 @@ node -e "const f='windows/app/package.json',p=require('./'+f);p.version='$V';req
 rm -f build/Circuit-Maker-macOS.zip
 ditto -c -k --keepParent "build/Circuit Maker.app" build/Circuit-Maker-macOS.zip
 windows/build-windows.sh
+web/build-web.sh
 
 # 3. Subir a GitHub y publicar la versión
 git add -A

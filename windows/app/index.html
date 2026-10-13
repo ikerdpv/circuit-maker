@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#242426">
+<link rel="icon" href="icon.png">
+<!--WEB-HEAD: web/build-web.sh pone aquí el manifiesto de la versión web-->
 <title>Circuit Maker</title>
 <style>
 :root {
@@ -986,20 +990,72 @@ function toWorld(e) {
 canvas.tabIndex = 0;
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
+// Pantallas táctiles: un dedo actúa como el ratón; dos dedos desplazan y hacen zoom.
+const touches = new Map();
+let pinch = null;
+
+function canvasPoint(e) {
+  const r = canvas.getBoundingClientRect();
+  return P(e.clientX - r.left, e.clientY - r.top);
+}
+
+/** Abandona el gesto en curso (por ejemplo, al apoyar un segundo dedo) sin dejar cambios a medias. */
+function cancelDrag() {
+  if (drag && (drag.type === 'moveComp' || drag.type === 'moveWire') && drag.moved) {
+    undoStack.pop();
+    setCircuit(drag.origin);
+  }
+  drag = null; wireEnd = null;
+}
+
+function startPinch() {
+  cancelDrag();
+  const [a, b] = [...touches.values()];
+  pinch = {
+    d0: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)),
+    mid0: P((a.x + b.x) / 2, (a.y + b.y) / 2),
+    zoom0: zoom, pan0: { ...pan },
+  };
+}
+
+function movePinch() {
+  const [a, b] = [...touches.values()];
+  const mid = P((a.x + b.x) / 2, (a.y + b.y) / 2);
+  const z = Math.min(3, Math.max(0.4, pinch.zoom0 * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d0));
+  // El punto del esquema que estaba entre los dedos sigue entre los dedos.
+  pan = P(mid.x - (pinch.mid0.x - pinch.pan0.x) * z / pinch.zoom0, mid.y - (pinch.mid0.y - pinch.pan0.y) * z / pinch.zoom0);
+  zoom = z;
+  showZoom();
+}
+
 canvas.addEventListener('pointerdown', e => {
   canvas.focus();
   canvas.setPointerCapture(e.pointerId);
   closeMenus();
+  const touch = e.pointerType === 'touch';
+  if (touch) {
+    touches.set(e.pointerId, canvasPoint(e));
+    if (touches.size === 2) { startPinch(); return; }
+    if (touches.size > 2) return;
+  }
   if (e.button === 1 || e.button === 2 || spaceDown) {
     drag = { type: 'pan', sx: e.clientX, sy: e.clientY, pan0: { ...pan } };
     canvas.style.cursor = 'grabbing';
     return;
   }
   if (e.button !== 0) return;
-  begin(toWorld(e));
+  begin(toWorld(e), touch);
+  // Con el dedo, arrastrar sobre un hueco vacío desplaza el esquema.
+  if (touch && tool.type === 'select' && drag.type === 'none') {
+    drag = { type: 'pan', sx: e.clientX, sy: e.clientY, pan0: { ...pan } };
+  }
 });
 
 canvas.addEventListener('pointermove', e => {
+  if (e.pointerType === 'touch' && touches.has(e.pointerId)) {
+    touches.set(e.pointerId, canvasPoint(e));
+    if (pinch) { if (touches.size >= 2) movePinch(); return; }
+  }
   const w = toWorld(e);
   const h = snap(w);
   if (!hover || !same(h, hover)) { hover = h; renderStatus(); }
@@ -1007,9 +1063,22 @@ canvas.addEventListener('pointermove', e => {
 });
 
 canvas.addEventListener('pointerup', e => {
+  const touch = e.pointerType === 'touch';
+  if (touch) {
+    touches.delete(e.pointerId);
+    // Tras un gesto de dos dedos no se hace nada más hasta levantar los dos.
+    if (pinch) { if (touches.size === 0) pinch = null; return; }
+  }
   if (drag) end(e, toWorld(e));
   drag = null; wireEnd = null;
-  updateCursor(toWorld(e));
+  if (touch) { hover = null; renderStatus(); } else updateCursor(toWorld(e));
+});
+
+canvas.addEventListener('pointercancel', e => {
+  touches.delete(e.pointerId);
+  if (touches.size === 0) pinch = null;
+  cancelDrag();
+  hover = null; renderStatus();
 });
 
 canvas.addEventListener('pointerleave', () => { if (!drag) { hover = null; renderStatus(); } });
@@ -1036,16 +1105,17 @@ function updateCursor(w) {
   canvas.style.cursor = cur;
 }
 
-function begin(w) {
+function begin(w, touch = false) {
   const g = snap(w);
+  const reach = touch ? 2 : 1;   // el dedo es menos preciso que el ratón
   switch (tool.type) {
     case 'wire': {
-      const start = terminalNear(circuit, w, 10) || g;
+      const start = terminalNear(circuit, w, 10 * reach) || g;
       drag = { type: 'wire', from: start }; wireEnd = start;
       break;
     }
     case 'select': {
-      const t = terminalNear(circuit, w);
+      const t = terminalNear(circuit, w, 7 * reach);
       if (t) { drag = { type: 'wire', from: t }; wireEnd = t; break; }
       const c = hitComponent(circuit, w);
       if (c) { select({ type: 'comp', id: c.id }); drag = { type: 'moveComp', id: c.id, origin: clone(circuit), start: g, moved: false }; break; }
@@ -1132,6 +1202,9 @@ function zoomAt(z, sx, sy) {
   z = Math.min(3, Math.max(0.4, z));
   pan = P(sx - (sx - pan.x) * z / zoom, sy - (sy - pan.y) * z / zoom);
   zoom = z;
+  showZoom();
+}
+function showZoom() {
   document.getElementById('zoomLabel').textContent = Math.round(zoom * 100) + ' %';
 }
 const zoomCenter = f => zoomAt(zoom * f, stage.clientWidth / 2, stage.clientHeight / 2);
@@ -1239,7 +1312,7 @@ document.getElementById('palette').addEventListener('click', e => {
 
 function renderStatus() {
   const hints = {
-    select: 'Arrastra para mover · arrastra desde un borne para tender un cable · doble clic en un interruptor para abrirlo/cerrarlo · R gira · Supr borra · rueda o botón derecho para desplazarte',
+    select: 'Arrastra para mover · arrastra desde un borne para tender un cable · doble clic en un interruptor para abrirlo/cerrarlo · R gira · Supr o Retroceso borra · rueda o botón derecho para desplazarte',
     wire: 'Arrastra de un punto a otro para tender un cable · Esc para terminar',
     delete: 'Haz clic sobre un componente o cable para borrarlo · Esc para terminar',
     place: `Haz clic para colocar ${tool.kind ? KIND[tool.kind].art : ''} · R gira · Esc para terminar`,
@@ -1527,6 +1600,15 @@ if (window.circuitMaker) {
   b.onclick = () => window.circuitMaker.checkForUpdates();
   window.circuitMaker.version().then(v => { $('logo').parentElement.title = 'Versión ' + v; });
   window.circuitMaker.onUpdateStatus(t => { $('updateInfo').textContent = t; });
+}
+
+// Versión web (ChromeOS y cualquier navegador): instalable y con modo sin conexión.
+const WEB_VERSION = 'dev';   // web/build-web.sh pone aquí el número de versión
+if (!window.circuitMaker && /^https?:$/.test(location.protocol)) {
+  $('logo').parentElement.title = 'Versión ' + WEB_VERSION;
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(e => console.warn('Sin modo sin conexión:', e));
+  }
 }
 
 readColors();

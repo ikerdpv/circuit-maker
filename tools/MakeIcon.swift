@@ -1,4 +1,5 @@
-// Genera Resources/AppIcon.icns. Uso: ./tools/make_icon.sh
+// Dibuja el icono de la app. Uso: ./tools/make_icon.sh
+// Con --maskable el fondo ocupa todo el cuadrado (iconos "maskable" de la versión web).
 import AppKit
 
 let size: CGFloat = 1024
@@ -6,8 +7,12 @@ let img = NSImage(size: NSSize(width: size, height: size))
 img.lockFocus()
 let ctx = NSGraphicsContext.current!.cgContext
 
-// Fondo redondeado
-let bg = NSBezierPath(roundedRect: NSRect(x: 100, y: 100, width: 824, height: 824), xRadius: 185, yRadius: 185)
+let maskable = CommandLine.arguments.contains("--maskable")
+
+// Fondo redondeado (o a sangre, si el sistema recorta el icono con su propia forma)
+let bg = maskable
+    ? NSBezierPath(rect: NSRect(x: 0, y: 0, width: size, height: size))
+    : NSBezierPath(roundedRect: NSRect(x: 100, y: 100, width: 824, height: 824), xRadius: 185, yRadius: 185)
 NSGradient(colors: [NSColor(calibratedRed: 0.10, green: 0.16, blue: 0.32, alpha: 1),
                     NSColor(calibratedRed: 0.05, green: 0.08, blue: 0.18, alpha: 1)])!.draw(in: bg, angle: -90)
 
@@ -15,8 +20,9 @@ bg.addClip()
 
 // Rejilla de puntos
 NSColor(white: 1, alpha: 0.12).setFill()
-for x in stride(from: 180.0, through: 850, by: 56) {
-    for y in stride(from: 180.0, through: 850, by: 56) {
+let dots = maskable ? stride(from: 12.0, through: 1024, by: 56) : stride(from: 180.0, through: 850, by: 56)
+for x in dots {
+    for y in dots {
         NSBezierPath(ovalIn: NSRect(x: x - 4, y: y - 4, width: 8, height: 8)).fill()
     }
 }

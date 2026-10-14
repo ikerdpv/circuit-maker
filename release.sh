@@ -26,7 +26,7 @@ web/build-web.sh
 
 # 3. Subir a GitHub y publicar la versión
 git add -A
-git commit -m "Versión $V"
+git commit -m "Versión $V" ${COMMIT_TRAILER:+-m "$COMMIT_TRAILER"}   # COMMIT_TRAILER: línea opcional al final del mensaje
 git tag "v$V"
 git push origin HEAD --tags
 gh release create "v$V" build/Circuit-Maker-macOS.zip windows/Circuit-Maker-Windows.zip \

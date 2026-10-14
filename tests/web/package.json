@@ -1,0 +1,8 @@
+{
+  "name": "circuit-maker-web-tests",
+  "private": true,
+  "description": "Pruebas de la versión de Windows/web con Chrome automático.",
+  "type": "module",
+  "scripts": { "test": "node selection.mjs" },
+  "devDependencies": { "puppeteer-core": "^24.0.0" }
+}

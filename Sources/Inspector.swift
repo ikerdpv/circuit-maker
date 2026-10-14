@@ -13,17 +13,21 @@ struct Inspector: View {
                     Notice(text: $0, color: .orange, icon: "exclamationmark.triangle.fill")
                 }
 
-                switch state.selection {
+                switch state.single {
                 case .comp(let id)?:
                     ComponentInspector(state: state, id: id).id(id)
                 case .wire(let id)?:
                     WireInspector(state: state, id: id)
                 case nil:
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Nada seleccionado").font(.headline)
-                        Text("Haz clic en un componente para ver y cambiar sus valores. Elige una pieza a la izquierda y haz clic en el lienzo para colocarla; arrastra desde un borne para unirla con un cable.")
-                            .font(.callout).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if state.selection.count > 1 {
+                        MultiInspector(state: state)
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Nada seleccionado").font(.headline)
+                            Text("Haz clic en un componente para ver y cambiar sus valores. Elige una pieza a la izquierda y haz clic en el lienzo para colocarla; arrastra desde un borne para unirla con un cable. Arrastra sobre un hueco para seleccionar varias cosas a la vez.")
+                                .font(.callout).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
 
@@ -263,6 +267,43 @@ struct WireInspector: View {
     }
 }
 
+/// Varios elementos seleccionados a la vez.
+struct MultiInspector: View {
+    var state: AppState
+
+    var body: some View {
+        let comps = state.circuit.components.filter { state.selection.contains(.comp($0.id)) }
+        let wires = state.circuit.wires.filter { state.selection.contains(.wire($0.id)) }.count
+        let consumed = comps.filter { $0.kind != .battery }
+            .reduce(0.0) { $0 + max(0, state.result.comps[$1.id]?.p ?? 0) }
+        VStack(alignment: .leading, spacing: 10) {
+            Text("\(state.selection.count) elementos seleccionados").font(.title3.bold())
+            Text(Self.describe(comps.map(\.name), wires: wires))
+                .font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if state.result.error == nil && !comps.isEmpty {
+                ValueRow("Potencia que consumen", fmt(consumed, "W"))
+            }
+            Hint("Arrastra cualquiera de ellos para moverlos juntos. ⌘+clic añade o quita un elemento, ⌘A selecciona todo y Esc quita la selección.")
+            HStack {
+                if !comps.isEmpty {
+                    Button { state.rotateSelection() } label: { Label("Girar", systemImage: "rotate.right") }
+                }
+                Spacer()
+                Button(role: .destructive) { state.deleteSelection() } label: { Label("Eliminar", systemImage: "trash") }
+            }
+        }
+    }
+
+    /// "E1, R1 y 2 cables"
+    static func describe(_ names: [String], wires: Int) -> String {
+        var parts = names
+        if wires > 0 { parts.append(wires == 1 ? "1 cable" : "\(wires) cables") }
+        guard parts.count > 1 else { return parts.first ?? "" }
+        return parts.dropLast().joined(separator: ", ") + " y " + parts.last!
+    }
+}
+
 struct SummaryView: View {
     var state: AppState
 
@@ -292,7 +333,7 @@ struct SummaryView: View {
                         }
                         .font(.callout.monospacedDigit())
                         .contentShape(Rectangle())
-                        .onTapGesture { state.selection = .comp(c.id) }
+                        .onTapGesture { state.selection = [.comp(c.id)] }
                     }
                 }
                 Divider()

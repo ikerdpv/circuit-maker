@@ -20,10 +20,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.activate(ignoringOtherApps: true)
+        AppState.shared.installKeyMonitor()
+        #if SELFTEST
+        SelfTest.start()   // tests/mac/run.sh
+        #else
         // Al abrir la app, busca actualizaciones en GitHub.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             Updater.check(userInitiated: false)
         }
+        #endif
     }
 }
 
@@ -122,7 +127,7 @@ struct StatusBar: View {
 
     private var hint: String {
         switch state.tool {
-        case .select: "Arrastra para mover · arrastra desde un borne para tender un cable · doble clic en un interruptor para abrirlo/cerrarlo · R gira · ⌫ borra"
+        case .select: "Arrastra para mover · arrastra desde un borne para tender un cable · arrastra sobre un hueco para seleccionar varios · ⌘+clic añade o quita · R gira · ⌫ borra"
         case .wire: "Arrastra de un punto a otro para tender un cable · Esc para terminar"
         case .delete: "Haz clic sobre un componente o cable para borrarlo · Esc para terminar"
         case .place(let k): "Haz clic para colocar \(k.withArticle) · R gira · Esc para terminar"
@@ -172,8 +177,14 @@ struct AppCommands: Commands {
             Button("Rehacer") { state.redo() }.keyboardShortcut("z", modifiers: [.command, .shift])
         }
         CommandMenu("Circuito") {
+            Button("Seleccionar todo") {
+                // Si se está escribiendo en un campo, ⌘A selecciona su texto.
+                if let text = NSApp.keyWindow?.firstResponder as? NSText { text.selectAll(nil) } else { state.selectAll() }
+            }
+            .keyboardShortcut("a")
             Button("Girar selección") { state.rotateSelection() }.keyboardShortcut("r")
-            Button("Eliminar selección") { state.deleteSelection() }.keyboardShortcut(.delete, modifiers: .command)
+            // ⌫ y ⌘⌫ los atiende AppState.handleKey (no aquí, para no robarlos a los campos de texto).
+            Button("Eliminar selección  ⌫") { state.deleteSelection() }
             Divider()
             Button("Acercar") { state.zoomIn() }.keyboardShortcut("+")
             Button("Alejar") { state.zoomOut() }.keyboardShortcut("-")

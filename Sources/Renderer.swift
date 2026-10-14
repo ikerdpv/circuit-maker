@@ -85,7 +85,8 @@ struct SymbolIcon: View {
 struct Renderer {
     let circuit: Circuit
     let result: SolveResult
-    let selection: Selection?
+    let selection: Set<Selection>
+    let marquee: CGRect?
     let time: Double
     let showValues: Bool
     let animate: Bool
@@ -118,7 +119,7 @@ struct Renderer {
         let wst = StrokeStyle(lineWidth: 2.5, lineCap: .round)
 
         // Cables
-        if case .wire(let id)? = selection, let w = circuit.wires.first(where: { $0.id == id }) {
+        for w in circuit.wires where selection.contains(.wire(w.id)) {
             ctx.stroke(line(w.a.pt, w.b.pt), with: .color(.accentColor.opacity(0.35)),
                        style: StrokeStyle(lineWidth: 10, lineCap: .round))
         }
@@ -157,6 +158,11 @@ struct Renderer {
             ctx.stroke(line(a.pt, b.pt), with: .color(.accentColor),
                        style: StrokeStyle(lineWidth: 2.5, lineCap: .round, dash: [6, 4]))
         }
+        if let marquee {
+            let box = Path(marquee)
+            ctx.fill(box, with: .color(.accentColor.opacity(0.1)))
+            ctx.stroke(box, with: .color(.accentColor), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+        }
         if showHover, let h = hover {
             ctx.stroke(circle(h.pt, 6), with: .color(.accentColor), lineWidth: 1.5)
         }
@@ -170,7 +176,7 @@ struct Renderer {
         local.translateBy(x: c.a.pt.x, y: c.a.pt.y)
         local.rotate(by: .degrees(Double(c.rotIndex) * 90))
 
-        if selection == .comp(c.id) {
+        if !isGhost && selection.contains(.comp(c.id)) {
             let box = Path(roundedRect: CGRect(x: -8, y: -22, width: L + 16, height: 44), cornerRadius: 9)
             local.fill(box, with: .color(.accentColor.opacity(0.08)))
             local.stroke(box, with: .color(.accentColor), style: StrokeStyle(lineWidth: 1.5, dash: [5, 3]))

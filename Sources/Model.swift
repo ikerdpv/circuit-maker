@@ -149,28 +149,54 @@ struct Circuit: Codable, Equatable {
 
     // MARK: Edición
 
-    func movingComponent(_ id: UUID, by d: GP) -> Circuit {
+    /// Mueve los elementos seleccionados. Los extremos de cable que tocan algo que se mueve
+    /// (bornes de las piezas o extremos de los cables seleccionados) le siguen, para no desconectarse.
+    func moving(_ items: Set<Selection>, by d: GP) -> Circuit {
         var c = self
-        guard let i = c.components.firstIndex(where: { $0.id == id }) else { return c }
-        let oa = c.components[i].a, ob = c.components[i].b
-        c.components[i].pos = c.components[i].pos + d
-        // Los cables conectados a sus bornes le siguen.
+        var points = Set<GP>()
+        for i in c.components.indices where items.contains(.comp(c.components[i].id)) {
+            points.insert(c.components[i].a)
+            points.insert(c.components[i].b)
+            c.components[i].pos = c.components[i].pos + d
+        }
+        for w in c.wires where items.contains(.wire(w.id)) {
+            points.insert(w.a)
+            points.insert(w.b)
+        }
         for j in c.wires.indices {
-            if c.wires[j].a == oa || c.wires[j].a == ob { c.wires[j].a = c.wires[j].a + d }
-            if c.wires[j].b == oa || c.wires[j].b == ob { c.wires[j].b = c.wires[j].b + d }
+            if points.contains(c.wires[j].a) { c.wires[j].a = c.wires[j].a + d }
+            if points.contains(c.wires[j].b) { c.wires[j].b = c.wires[j].b + d }
         }
         return c
     }
 
-    func movingWire(_ id: UUID, by d: GP) -> Circuit {
-        var c = self
-        guard let i = c.wires.firstIndex(where: { $0.id == id }) else { return c }
-        c.wires[i].a = c.wires[i].a + d
-        c.wires[i].b = c.wires[i].b + d
-        return c
+    /// Todos los elementos que tocan el rectángulo (como al seleccionar archivos arrastrando).
+    func items(in rect: CGRect) -> Set<Selection> {
+        var s = Set<Selection>()
+        for k in components where segmentIntersects(k.a.pt, k.b.pt, rect) { s.insert(.comp(k.id)) }
+        for w in wires where segmentIntersects(w.a.pt, w.b.pt, rect) { s.insert(.wire(w.id)) }
+        return s
+    }
+
+    var allItems: Set<Selection> {
+        Set(components.map { .comp($0.id) } + wires.map { .wire($0.id) })
+    }
+
+    func contains(_ item: Selection) -> Bool {
+        switch item {
+        case .comp(let id): components.contains { $0.id == id }
+        case .wire(let id): wires.contains { $0.id == id }
+        }
     }
 
     // MARK: Selección con el ratón
+
+    /// Pieza o cable bajo el ratón (las piezas tienen prioridad).
+    func hitItem(_ p: CGPoint) -> Selection? {
+        if let c = hitComponent(p) { return .comp(c.id) }
+        if let w = hitWire(p) { return .wire(w.id) }
+        return nil
+    }
 
     func hitComponent(_ p: CGPoint) -> Component? {
         var best: (Component, CGFloat)?
@@ -245,6 +271,28 @@ struct Circuit: Codable, Equatable {
         }
         return c
     }
+}
+
+/// Algo seleccionable del esquema.
+enum Selection: Hashable {
+    case comp(UUID)
+    case wire(UUID)
+}
+
+/// ¿El segmento a-b toca el rectángulo? (recorte de Liang-Barsky)
+func segmentIntersects(_ a: CGPoint, _ b: CGPoint, _ r: CGRect) -> Bool {
+    var t0: CGFloat = 0, t1: CGFloat = 1
+    let dx = b.x - a.x, dy = b.y - a.y
+    for (p, q) in [(-dx, a.x - r.minX), (dx, r.maxX - a.x), (-dy, a.y - r.minY), (dy, r.maxY - a.y)] {
+        if p == 0 {
+            if q < 0 { return false }
+        } else {
+            let t = q / p
+            if p < 0 { t0 = max(t0, t) } else { t1 = min(t1, t) }
+            if t0 > t1 { return false }
+        }
+    }
+    return true
 }
 
 func distToSeg(_ p: CGPoint, _ a: CGPoint, _ b: CGPoint) -> CGFloat {

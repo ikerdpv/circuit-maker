@@ -40,7 +40,8 @@ La app no está firmada con un certificado de pago, por eso salen esos avisos la
 | Tender un cable | Arrastra desde el borne de una pieza hasta otro punto (o usa la herramienta Cable, `W`) |
 | Cambiar valores | Selecciona la pieza y edita el panel de la derecha (acepta `4k7`, `10k`, `2,2M`…) |
 | Abrir o cerrar un interruptor | Doble clic sobre él, o barra espaciadora |
-| Girar / borrar | `R` / `Supr` o `⌫` |
+| Seleccionar varias cosas | Arrastra sobre un hueco para dibujar un rectángulo: se selecciona todo lo que toque. Ctrl+clic (⌘+clic en Mac) añade o quita una pieza, Mayús+clic la añade y Ctrl+A (⌘A) lo selecciona todo. Esc quita la selección |
+| Mover, girar o borrar varias a la vez | Arrastra cualquiera de las seleccionadas; `R` gira cada una; `Supr` o `⌫` las borra |
 | Deshacer / rehacer | Ctrl+Z / Ctrl+Y (⌘Z / ⇧⌘Z en Mac) |
 | Moverse por el esquema (Windows y web) | Rueda del ratón o dos dedos en el panel táctil, botón derecho arrastrando, Ctrl + rueda (o pellizco) para el zoom |
 
@@ -62,6 +63,11 @@ release.sh          Publica una versión nueva para todas las plataformas
 - **Web:** `web/build-web.sh` copia esa misma página a `docs/` y le añade el manifiesto y el *service worker* que la hacen instalable. GitHub Pages publica `docs/` en cuanto se sube a `main`.
 
 El cálculo es un análisis nodal modificado (MNA) en corriente continua: `Sources/Solver.swift` en Mac y la función `solve` de `windows/app/index.html` en Windows.
+
+### Pruebas
+
+- **Mac:** `tests/mac/run.sh` compila una versión de prueba que se abre unos segundos, se manda a sí misma clics, arrastres y teclas (sin pedir permisos de accesibilidad) y comprueba el resultado.
+- **Windows y web:** `cd tests/web && npm install && npm test` hace lo mismo con Chrome automático (necesita Google Chrome instalado).
 
 ### Publicar una actualización
 

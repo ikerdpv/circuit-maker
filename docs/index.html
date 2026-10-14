@@ -270,24 +270,57 @@ function addWire(circ, a, b) {
 
 const findComp = (circ, id) => circ.components.find(c => c.id === id);
 
-function movingComponent(circ, id, d) {
+/** Mueve los elementos seleccionados. Los extremos de cable que tocan algo que se mueve
+ *  (bornes de las piezas o extremos de los cables seleccionados) le siguen, para no desconectarse. */
+function moving(circ, items, d) {
   const c = clone(circ);
-  const k = findComp(c, id);
-  if (!k) return c;
-  const oa = tA(k), ob = tB(k);
-  k.pos = add(k.pos, d);
+  const has = (type, id) => items.some(s => s.type === type && s.id === id);
+  const points = new Set();
+  for (const k of c.components) {
+    if (!has('comp', k.id)) continue;
+    points.add(keyOf(tA(k))); points.add(keyOf(tB(k)));
+    k.pos = add(k.pos, d);
+  }
+  for (const w of c.wires) if (has('wire', w.id)) { points.add(keyOf(w.a)); points.add(keyOf(w.b)); }
   for (const w of c.wires) {
-    if (same(w.a, oa) || same(w.a, ob)) w.a = add(w.a, d);
-    if (same(w.b, oa) || same(w.b, ob)) w.b = add(w.b, d);
+    if (points.has(keyOf(w.a))) w.a = add(w.a, d);
+    if (points.has(keyOf(w.b))) w.b = add(w.b, d);
   }
   return c;
 }
 
-function movingWire(circ, id, d) {
-  const c = clone(circ);
-  const w = c.wires.find(w => w.id === id);
-  if (w) { w.a = add(w.a, d); w.b = add(w.b, d); }
-  return c;
+/** ¿El segmento a-b toca el rectángulo r? (recorte de Liang-Barsky) */
+function segmentIntersects(a, b, r) {
+  let t0 = 0, t1 = 1;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  for (const [p, q] of [[-dx, a.x - r.x], [dx, r.x + r.w - a.x], [-dy, a.y - r.y], [dy, r.y + r.h - a.y]]) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+    if (t0 > t1) return false;
+  }
+  return true;
+}
+
+/** Todo lo que toca el rectángulo (como al seleccionar archivos arrastrando). */
+function itemsInRect(circ, r) {
+  return [
+    ...circ.components.filter(k => segmentIntersects(px(tA(k)), px(tB(k)), r)).map(k => ({ type: 'comp', id: k.id })),
+    ...circ.wires.filter(w => segmentIntersects(px(w.a), px(w.b), r)).map(w => ({ type: 'wire', id: w.id })),
+  ];
+}
+
+const allItems = circ => [
+  ...circ.components.map(k => ({ type: 'comp', id: k.id })),
+  ...circ.wires.map(w => ({ type: 'wire', id: w.id })),
+];
+
+/** Pieza o cable bajo el ratón (las piezas tienen prioridad). */
+function hitItem(circ, p) {
+  const c = hitComponent(circ, p);
+  if (c) return { type: 'comp', id: c.id };
+  const w = hitWire(circ, p);
+  return w ? { type: 'wire', id: w.id } : null;
 }
 
 function distToSeg(p, a, b) {
@@ -570,7 +603,8 @@ function parseValue(str) {
 let circuit = example(0);
 let result = solve(circuit);
 let tool = { type: 'select' };
-let selection = null;              // { type: 'comp' | 'wire', id }
+let selection = [];                // [{ type: 'comp' | 'wire', id }]
+let marquee = null;                // rectángulo de selección { x, y, w, h } (px del mundo)
 let placeRot = 0;
 let showValues = true, animate = true, colorByVoltage = true;
 let zoom = 1, pan = P(0, 0);
@@ -583,7 +617,17 @@ let fileHandle = null, fileName = null;
 const undoStack = [], redoStack = [];
 
 const sameTool = (a, b) => a.type === b.type && a.kind === b.kind;
-const selectedComp = () => selection && selection.type === 'comp' ? findComp(circuit, selection.id) : null;
+const isSel = (type, id) => selection.some(s => s.type === type && s.id === id);
+/** El elemento seleccionado, si solo hay uno. */
+const single = () => selection.length === 1 ? selection[0] : null;
+const selectedComp = () => { const s = single(); return s && s.type === 'comp' ? findComp(circuit, s.id) : null; };
+const selectedComps = () => circuit.components.filter(k => isSel('comp', k.id));
+/** Une listas de elementos sin repetir. */
+const union = (...lists) => {
+  const out = [];
+  for (const s of lists.flat()) if (!out.some(o => o.type === s.type && o.id === s.id)) out.push(s);
+  return out;
+};
 
 function checkpoint() {
   undoStack.push(clone(circuit));
@@ -600,9 +644,7 @@ function setCircuit(c, opts = {}) {
 }
 
 function validateSelection() {
-  if (!selection) return;
-  const ok = selection.type === 'comp' ? !!findComp(circuit, selection.id) : circuit.wires.some(w => w.id === selection.id);
-  if (!ok) selection = null;
+  selection = selection.filter(s => s.type === 'comp' ? !!findComp(circuit, s.id) : circuit.wires.some(w => w.id === s.id));
 }
 
 function undo() { if (!undoStack.length) return; redoStack.push(clone(circuit)); setCircuit(undoStack.pop()); }
@@ -619,10 +661,17 @@ function updateComp(id, f, { cp = true, fromInspector = false } = {}) {
   setCircuit(c, { fromInspector });
 }
 
+/** Cambia la selección: un elemento, una lista o null. */
 function select(sel) {
-  const changed = JSON.stringify(sel) !== JSON.stringify(selection);
-  selection = sel;
+  const next = sel == null ? [] : Array.isArray(sel) ? sel : [sel];
+  const changed = JSON.stringify(next) !== JSON.stringify(selection);
+  selection = next;
   if (changed) refreshUI();
+}
+
+function selectAll() {
+  if (tool.type !== 'select') setTool({ type: 'select' });
+  select(allItems(circuit));
 }
 
 function setTool(t) {
@@ -638,7 +687,7 @@ function placeComp(kind, center) {
   const c = clone(circuit);
   const d = DIRS[placeRot];
   const id = addComp(c, kind, P(center.x - d[0] * LEN / 2, center.y - d[1] * LEN / 2), placeRot);
-  selection = { type: 'comp', id };
+  selection = [{ type: 'comp', id }];
   setCircuit(c);
 }
 
@@ -649,26 +698,39 @@ function wireBetween(a, b) {
   setCircuit(c);
 }
 
-function deleteItem(sel) {
+function deleteItems(items) {
+  if (!items.length) return;
   checkpoint();
   const c = clone(circuit);
-  if (sel.type === 'comp') c.components = c.components.filter(k => k.id !== sel.id);
-  else c.wires = c.wires.filter(w => w.id !== sel.id);
+  const has = (type, id) => items.some(s => s.type === type && s.id === id);
+  c.components = c.components.filter(k => !has('comp', k.id));
+  c.wires = c.wires.filter(w => !has('wire', w.id));
   setCircuit(c);
 }
 
-function deleteSelection() { if (selection) deleteItem(selection); }
+function deleteSelection() { deleteItems(selection); }
 
+/** Gira cada pieza seleccionada sobre su centro. */
 function rotateSelection() {
   if (tool.type === 'place') { placeRot = (placeRot + 1) % 4; return; }
-  if (selection && selection.type === 'comp') updateComp(selection.id, rotateComp);
+  changeSelectedComps(rotateComp);
 }
 
 function toggleSwitch(id) { updateComp(id, k => { k.closed = !k.closed; }); }
 
+/** Aplica f a todas las piezas seleccionadas, con un solo paso de deshacer. */
+function changeSelectedComps(f, filter = () => true) {
+  const ids = selectedComps().filter(filter).map(k => k.id);
+  if (!ids.length) return;
+  checkpoint();
+  const c = clone(circuit);
+  for (const k of c.components) if (ids.includes(k.id)) f(k);
+  setCircuit(c);
+}
+
 function loadCircuit(c, name = null, handle = null) {
   checkpoint();
-  selection = null;
+  selection = [];
   fileName = name; fileHandle = handle;
   setCircuit(c);
   fitView();
@@ -852,7 +914,7 @@ function drawComponent(c, ghost = false) {
   if (ghost) ctx.globalAlpha = 0.4;
   ctx.translate(a.x, a.y);
   ctx.rotate(rotIdx(c) * Math.PI / 2);
-  if (!ghost && selection && selection.type === 'comp' && selection.id === c.id) {
+  if (!ghost && isSel('comp', c.id)) {
     ctx.beginPath(); ctx.roundRect(-8, -22, LPX + 16, 44, 9);
     ctx.fillStyle = colors.accentSoft; ctx.fill();
     ctx.setLineDash([5, 3]); ctx.strokeStyle = colors.accent; ctx.lineWidth = 1.5; ctx.stroke(); ctx.setLineDash([]);
@@ -935,10 +997,7 @@ function draw(now) {
   drawGrid(W, H);
 
   // Cables
-  if (selection && selection.type === 'wire') {
-    const w = circuit.wires.find(w => w.id === selection.id);
-    if (w) line(px(w.a), px(w.b), colors.accentSoft, 10);
-  }
+  for (const w of circuit.wires) if (isSel('wire', w.id)) line(px(w.a), px(w.b), colors.accentSoft, 10);
   if (ok) for (const s of result.segs) line(px(s.a), px(s.b), vColor((s.va + s.vb) / 2), 2.5);
   else for (const w of circuit.wires) line(px(w.a), px(w.b), colors.ink, 2.5);
 
@@ -966,6 +1025,14 @@ function draw(now) {
   if (tool.type === 'place' && hover && !drag) {
     const d = DIRS[placeRot];
     drawComponent({ kind: tool.kind, name: '', pos: P(hover.x - d[0] * 2, hover.y - d[1] * 2), rot: placeRot, closed: true, ratedP: 1 }, true);
+  }
+  if (marquee) {
+    ctx.fillStyle = colors.accentSoft;
+    ctx.fillRect(marquee.x, marquee.y, marquee.w, marquee.h);
+    ctx.setLineDash([4 / zoom, 3 / zoom]);
+    ctx.strokeStyle = colors.accent; ctx.lineWidth = 1 / zoom;
+    ctx.strokeRect(marquee.x, marquee.y, marquee.w, marquee.h);
+    ctx.setLineDash([]);
   }
   if (drag && drag.type === 'wire' && wireEnd) {
     for (const [a, b] of route(drag.from, wireEnd)) line(px(a), px(b), colors.accent, 2.5, [6, 4]);
@@ -1002,11 +1069,11 @@ function canvasPoint(e) {
 
 /** Abandona el gesto en curso (por ejemplo, al apoyar un segundo dedo) sin dejar cambios a medias. */
 function cancelDrag() {
-  if (drag && (drag.type === 'moveComp' || drag.type === 'moveWire') && drag.moved) {
+  if (drag && drag.type === 'move' && drag.moved) {
     undoStack.pop();
     setCircuit(drag.origin);
   }
-  drag = null; wireEnd = null;
+  drag = null; wireEnd = null; marquee = null;
 }
 
 function startPinch() {
@@ -1045,9 +1112,9 @@ canvas.addEventListener('pointerdown', e => {
     return;
   }
   if (e.button !== 0) return;
-  begin(toWorld(e), touch);
-  // Con el dedo, arrastrar sobre un hueco vacío desplaza el esquema.
-  if (touch && tool.type === 'select' && drag.type === 'none') {
+  begin(toWorld(e), e);
+  // Con el dedo, arrastrar sobre un hueco vacío desplaza el esquema (con el ratón, selecciona).
+  if (touch && drag.type === 'marquee') {
     drag = { type: 'pan', sx: e.clientX, sy: e.clientY, pan0: { ...pan } };
   }
 });
@@ -1071,7 +1138,7 @@ canvas.addEventListener('pointerup', e => {
     if (pinch) { if (touches.size === 0) pinch = null; return; }
   }
   if (drag) end(e, toWorld(e));
-  drag = null; wireEnd = null;
+  drag = null; wireEnd = null; marquee = null;
   if (touch) { hover = null; renderStatus(); } else updateCursor(toWorld(e));
 });
 
@@ -1106,9 +1173,13 @@ function updateCursor(w) {
   canvas.style.cursor = cur;
 }
 
-function begin(w, touch = false) {
+/** Qué hace un clic con modificador, como en las carpetas: Ctrl (⌘ en Mac) añade o quita, Mayús añade. */
+const clickMode = e => (e.ctrlKey || e.metaKey) ? 'toggle' : e.shiftKey ? 'add' : 'replace';
+
+function begin(w, e) {
   const g = snap(w);
-  const reach = touch ? 2 : 1;   // el dedo es menos preciso que el ratón
+  const reach = e.pointerType === 'touch' ? 2 : 1;   // el dedo es menos preciso que el ratón
+  const click = clickMode(e);
   switch (tool.type) {
     case 'wire': {
       const start = terminalNear(circuit, w, 10 * reach) || g;
@@ -1116,14 +1187,19 @@ function begin(w, touch = false) {
       break;
     }
     case 'select': {
-      const t = terminalNear(circuit, w, 7 * reach);
+      const t = click === 'replace' && terminalNear(circuit, w, 7 * reach);
       if (t) { drag = { type: 'wire', from: t }; wireEnd = t; break; }
-      const c = hitComponent(circuit, w);
-      if (c) { select({ type: 'comp', id: c.id }); drag = { type: 'moveComp', id: c.id, origin: clone(circuit), start: g, moved: false }; break; }
-      const wi = hitWire(circuit, w);
-      if (wi) { select({ type: 'wire', id: wi.id }); drag = { type: 'moveWire', id: wi.id, origin: clone(circuit), start: g, moved: false }; break; }
-      select(null);
-      drag = { type: 'none' };
+      const item = hitItem(circuit, w);
+      if (item) {
+        // Pulsar sobre algo ya seleccionado conserva el grupo para poder arrastrarlo entero.
+        if (click === 'replace' && !isSel(item.type, item.id)) select(item);
+        drag = { type: 'move', origin: clone(circuit), items: union(selection, [item]), start: g, moved: false, item, click };
+        break;
+      }
+      // Hueco vacío: rectángulo de selección.
+      const base = click === 'replace' ? [] : selection.slice();
+      select(base);
+      drag = { type: 'marquee', start: w, base };
       break;
     }
     default:
@@ -1140,11 +1216,17 @@ function update(e, w) {
     case 'wire':
       wireEnd = g;
       break;
-    case 'moveComp': case 'moveWire': {
+    case 'move': {
       const d = sub(g, drag.start);
       if (d.x === 0 && d.y === 0 && !drag.moved) return;
-      if (!drag.moved) { checkpoint(); drag.moved = true; }
-      setCircuit(drag.type === 'moveComp' ? movingComponent(drag.origin, drag.id, d) : movingWire(drag.origin, drag.id, d));
+      if (!drag.moved) { checkpoint(); drag.moved = true; selection = drag.items; }
+      setCircuit(moving(drag.origin, drag.items, d));
+      break;
+    }
+    case 'marquee': {
+      const a = drag.start;
+      marquee = { x: Math.min(a.x, w.x), y: Math.min(a.y, w.y), w: Math.abs(w.x - a.x), h: Math.abs(w.y - a.y) };
+      select(union(drag.base, itemsInRect(circuit, marquee)));
       break;
     }
   }
@@ -1157,24 +1239,20 @@ function end(e, w) {
     case 'wire':
       if (!same(g, drag.from)) wireBetween(drag.from, g);
       else if (tool.type === 'select') {
-        const c = hitComponent(circuit, w);
-        if (c) clicked(c);
-        else { const wi = hitWire(circuit, w); select(wi ? { type: 'wire', id: wi.id } : null); }
+        const item = hitItem(circuit, w);
+        if (item) clicked(item, 'replace'); else select(null);
       }
       break;
-    case 'moveComp':
-      if (drag.moved) cleanupWires();
-      else { const c = findComp(circuit, drag.id); if (c) clicked(c); }
+    case 'move':
+      if (drag.moved) cleanupWires(); else clicked(drag.item, drag.click);
       break;
-    case 'moveWire':
-      if (drag.moved) cleanupWires();
+    case 'marquee':
       break;
     default:
       if (tool.type === 'place') placeComp(tool.kind, g);
       else if (tool.type === 'delete') {
-        const c = hitComponent(circuit, w);
-        if (c) deleteItem({ type: 'comp', id: c.id });
-        else { const wi = hitWire(circuit, w); if (wi) deleteItem({ type: 'wire', id: wi.id }); }
+        const item = hitItem(circuit, w);
+        if (item) deleteItems([item]);
       }
   }
 }
@@ -1187,9 +1265,15 @@ function cleanupWires() {
   }
 }
 
-/** Clic: selecciona; doble clic en un interruptor lo abre o cierra. */
-function clicked(c) {
-  select({ type: 'comp', id: c.id });
+/** Clic sin arrastrar. Doble clic en un interruptor lo abre o cierra. */
+function clicked(item, click) {
+  if (click === 'toggle') {
+    select(isSel(item.type, item.id) ? selection.filter(s => !(s.type === item.type && s.id === item.id)) : union(selection, [item]));
+    return;
+  }
+  select(click === 'add' ? union(selection, [item]) : item);
+  const c = item.type === 'comp' && findComp(circuit, item.id);
+  if (!c) return;
   const now = performance.now();
   if (c.kind === 'toggle' && lastClick && lastClick.id === c.id && now - lastClick.t < 400) {
     toggleSwitch(c.id);
@@ -1239,6 +1323,7 @@ window.addEventListener('keydown', e => {
     if (k === '-') { e.preventDefault(); zoomCenter(0.8); return; }
     if (k === '0') { e.preventDefault(); zoomAt(1, stage.clientWidth / 2, stage.clientHeight / 2); return; }
     if (inField) return;
+    if (k === 'a') { e.preventDefault(); selectAll(); return; }
     if (k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); return; }
     if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redo(); return; }
     if (k === 'r') { e.preventDefault(); rotateSelection(); return; }
@@ -1248,13 +1333,15 @@ window.addEventListener('keydown', e => {
   if (e.key === ' ') {
     e.preventDefault();
     if (!spaceDown) { spaceDown = true; canvas.style.cursor = 'grab'; }
-    const c = selectedComp();
-    if (c && c.kind === 'toggle' && !e.repeat) toggleSwitch(c.id);
+    if (!e.repeat) changeSelectedComps(k => { k.closed = !k.closed; }, k => k.kind === 'toggle');
     return;
   }
   switch (e.key) {
     case 'Delete': case 'Backspace': e.preventDefault(); deleteSelection(); return;
-    case 'Escape': setTool({ type: 'select' }); closeMenus(); return;
+    case 'Escape':
+      if (tool.type === 'select') select(null); else setTool({ type: 'select' });
+      closeMenus();
+      return;
   }
   switch (k) {
     case 'r': rotateSelection(); break;
@@ -1313,7 +1400,7 @@ document.getElementById('palette').addEventListener('click', e => {
 
 function renderStatus() {
   const hints = {
-    select: 'Arrastra para mover · arrastra desde un borne para tender un cable · doble clic en un interruptor para abrirlo/cerrarlo · R gira · Supr o Retroceso borra · rueda o botón derecho para desplazarte',
+    select: 'Arrastra para mover · arrastra desde un borne para tender un cable · arrastra sobre un hueco para seleccionar varios · Ctrl+clic añade o quita · R gira · Supr o Retroceso borra · rueda o botón derecho para desplazarte',
     wire: 'Arrastra de un punto a otro para tender un cable · Esc para terminar',
     delete: 'Haz clic sobre un componente o cable para borrarlo · Esc para terminar',
     place: `Haz clic para colocar ${tool.kind ? KIND[tool.kind].art : ''} · R gira · Esc para terminar`,
@@ -1348,15 +1435,15 @@ const chips = (field, values, unit) =>
   `<div class="chips">${values.map(v => `<button data-preset="${field}" data-value="${v}">${fmt(v, unit)}</button>`).join('')}</div>`;
 const hintP = t => `<div class="muted small">${t}</div>`;
 
-let renderedSelKey = null;
 
 function renderSelection() {
   const el = document.getElementById('sel');
-  if (!selection) {
-    el.innerHTML = `<h3>Nada seleccionado</h3>${hintP('Haz clic en un componente para ver y cambiar sus valores. Elige una pieza a la izquierda y haz clic en el lienzo para colocarla; arrastra desde un borne para unirla con un cable.')}<div id="results"></div>`;
+  if (!selection.length) {
+    el.innerHTML = `<h3>Nada seleccionado</h3>${hintP('Haz clic en un componente para ver y cambiar sus valores. Elige una pieza a la izquierda y haz clic en el lienzo para colocarla; arrastra desde un borne para unirla con un cable. Arrastra sobre un hueco para seleccionar varias cosas a la vez.')}<div id="results"></div>`;
     return;
   }
-  if (selection.type === 'wire') {
+  if (selection.length > 1) { renderMulti(el); return; }
+  if (single().type === 'wire') {
     el.innerHTML = `<h3>Cable</h3><div id="results"></div>
       ${hintP('Un cable ideal une puntos con la misma tensión. Si pasa por el borne de un componente, queda conectado a él.')}
       <div class="actions" style="margin-top:10px"><span></span><button class="danger" data-action="delete">Eliminar</button></div>`;
@@ -1404,11 +1491,28 @@ function renderSelection() {
   paintIcons(el);
 }
 
+/** Varios elementos seleccionados a la vez. */
+function renderMulti(el) {
+  const comps = selectedComps();
+  const wires = circuit.wires.filter(w => isSel('wire', w.id)).length;
+  const parts = comps.map(k => esc(k.name));
+  if (wires) parts.push(wires === 1 ? '1 cable' : `${wires} cables`);
+  const list = parts.length > 1 ? parts.slice(0, -1).join(', ') + ' y ' + parts[parts.length - 1] : (parts[0] || '');
+  const consumed = comps.filter(k => k.kind !== 'battery').reduce((sum, k) => sum + Math.max(0, result.comps[k.id]?.p || 0), 0);
+  el.innerHTML = `<h3>${selection.length} elementos seleccionados</h3>
+    <div class="muted" style="margin-bottom:8px">${list}</div>
+    ${!result.error && comps.length ? valRow('Potencia que consumen', fmt(consumed, 'W')) : ''}
+    ${hintP('Arrastra cualquiera de ellos para moverlos juntos. Ctrl+clic añade o quita un elemento, Ctrl+A selecciona todo y Esc quita la selección.')}
+    <div class="actions" style="margin-top:10px">${comps.length ? '<button data-action="rotate">⟳ Girar</button>' : '<span></span>'}<button class="danger" data-action="delete">Eliminar</button></div>
+    <div id="results"></div>`;
+}
+
 function renderResults() {
   const el = document.getElementById('results');
-  if (!el || !selection || result.error) { if (el) el.innerHTML = ''; return; }
-  if (selection.type === 'wire') {
-    const segs = result.segs.filter(s => s.wireID === selection.id);
+  const one = single();
+  if (!el || !one || result.error) { if (el) el.innerHTML = ''; return; }
+  if (one.type === 'wire') {
+    const segs = result.segs.filter(s => s.wireID === one.id);
     el.innerHTML = segs.length
       ? valRow('Tensión del cable', fmt(segs[0].va, 'V')) + valRow('Corriente', fmt(Math.max(...segs.map(s => Math.abs(s.i))), 'A'))
       : '';
@@ -1456,7 +1560,7 @@ function renderSummary() {
   for (const c of comps) {
     const r = result.comps[c.id] || { v: 0, i: 0, p: 0 };
     const meter = c.kind === 'ammeter' || c.kind === 'voltmeter';
-    const cur = selection && selection.id === c.id ? 'cur' : '';
+    const cur = isSel('comp', c.id) ? 'cur' : '';
     h += `<tr class="rowsel ${cur}" data-select="${c.id}"><td><b>${esc(c.name)}</b></td><td>${fmt(Math.abs(r.v), 'V')}</td><td>${fmt(Math.abs(r.i), 'A')}</td><td>${meter ? '—' : fmt(Math.abs(r.p), 'W')}</td></tr>`;
   }
   h += '</table><hr class="div">';
@@ -1480,8 +1584,8 @@ inspector.addEventListener('click', e => {
   const row = t.closest('[data-select]');
   if (row) { select({ type: 'comp', id: row.dataset.select }); return; }
   const preset = t.closest('[data-preset]');
-  if (preset && selection) {
-    updateComp(selection.id, k => { k[preset.dataset.preset] = Number(preset.dataset.value); });
+  if (preset && single()) {
+    updateComp(single().id, k => { k[preset.dataset.preset] = Number(preset.dataset.value); });
     return;
   }
   const act = t.closest('[data-action]');
@@ -1490,15 +1594,16 @@ inspector.addEventListener('click', e => {
 
 inspector.addEventListener('change', e => {
   const t = e.target;
-  if (!selection || !t.dataset.field) return;
+  const one = single();
+  if (!one || !t.dataset.field) return;
   const f = t.dataset.field;
-  if (f === 'closed') { updateComp(selection.id, k => { k.closed = t.checked; }); return; }
+  if (f === 'closed') { updateComp(one.id, k => { k.closed = t.checked; }); return; }
   if (f === 'name') return;
   const v = parseValue(t.value);
   if (!Number.isFinite(v)) { t.classList.add('bad'); return; }
   t.classList.remove('bad');
   const lo = Number(t.dataset.min);
-  updateComp(selection.id, k => { k[f] = Math.max(lo, v); });
+  updateComp(one.id, k => { k[f] = Math.max(lo, v); });
 });
 
 inspector.addEventListener('keydown', e => {
@@ -1507,15 +1612,16 @@ inspector.addEventListener('keydown', e => {
 
 inspector.addEventListener('input', e => {
   const t = e.target;
-  if (!selection) return;
+  const one = single();
+  if (!one) return;
   if (t.dataset.field === 'name') {
-    updateComp(selection.id, k => { k.name = t.value; }, { cp: false, fromInspector: true });
+    updateComp(one.id, k => { k.name = t.value; }, { cp: false, fromInspector: true });
     return;
   }
   if (t.dataset.slider) {
     const v = t.dataset.slider === 'logR' ? roundNice(Math.pow(10, Number(t.value))) : Number(t.value);
     const field = t.dataset.slider === 'logR' ? 'resistance' : t.dataset.slider;
-    updateComp(selection.id, k => { k[field] = v; }, { cp: false, fromInspector: true });
+    updateComp(one.id, k => { k[field] = v; }, { cp: false, fromInspector: true });
     const num = inspector.querySelector(`input.num[data-field="${field}"]`);
     if (num) num.value = plain(v);
   }

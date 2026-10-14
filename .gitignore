@@ -4,3 +4,4 @@ build/
 windows/node_modules/
 windows/dist/
 windows/*.zip
+tests/web/node_modules/

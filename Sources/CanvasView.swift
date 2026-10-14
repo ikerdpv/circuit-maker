@@ -1,8 +1,8 @@
 import SwiftUI
+import AppKit
 
 struct CircuitCanvas: View {
     @Bindable var state: AppState
-    @FocusState private var focused: Bool
 
     private var drag: DragMode? {
         get { state.drag }
@@ -26,6 +26,7 @@ struct CircuitCanvas: View {
         let circuit = state.circuit
         let result = state.result
         let selection = state.selection
+        let marquee = state.marquee
         let showValues = state.showValues
         let animate = state.animate
         let colorByVoltage = state.colorByVoltage
@@ -51,7 +52,7 @@ struct CircuitCanvas: View {
                 Canvas { ctx, _ in
                     var g = ctx
                     g.scaleBy(x: zoom, y: zoom)
-                    Renderer(circuit: circuit, result: result, selection: selection,
+                    Renderer(circuit: circuit, result: result, selection: selection, marquee: marquee,
                              time: tl.date.timeIntervalSinceReferenceDate,
                              showValues: showValues, animate: animate, colorByVoltage: colorByVoltage,
                              wirePreview: preview, ghost: ghost, hover: hover, showHover: showHover)
@@ -68,12 +69,6 @@ struct CircuitCanvas: View {
             case .ended: state.hover = nil
             }
         }
-        .focusable()
-        .focused($focused)
-        .focusEffectDisabled()
-        .onKeyPress(phases: .down) { press in handleKey(press) }
-        .onChange(of: state.tool) { focused = true }
-        .onAppear { focused = true }
     }
 
     private func scaled(_ p: CGPoint) -> CGPoint {
@@ -86,7 +81,8 @@ struct CircuitCanvas: View {
         DragGesture(minimumDistance: 0)
             .onChanged { v in
                 if drag == nil {
-                    focused = true
+                    // Al pulsar en el lienzo se termina de editar cualquier campo de texto.
+                    NSApp.keyWindow?.makeFirstResponder(nil)
                     begin(scaled(v.startLocation))
                 }
                 update(scaled(v.location))
@@ -95,29 +91,33 @@ struct CircuitCanvas: View {
                 end(scaled(v.location))
                 drag = nil
                 wireEnd = nil
+                state.marquee = nil
             }
     }
 
     private func begin(_ p: CGPoint) {
         let g = GP.snap(p)
+        let mods = NSApp.currentEvent?.modifierFlags ?? NSEvent.modifierFlags   // las del propio clic
+        let click: ClickMode = mods.contains(.command) ? .toggle : mods.contains(.shift) ? .add : .replace
         switch state.tool {
         case .wire:
             let start = state.circuit.terminalNear(p, radius: 10) ?? g
             drag = .wire(start)
             wireEnd = start
         case .select:
-            if let t = state.circuit.terminalNear(p) {
+            if click == .replace, let t = state.circuit.terminalNear(p) {
                 drag = .wire(t)
                 wireEnd = t
-            } else if let c = state.circuit.hitComponent(p) {
-                state.selection = .comp(c.id)
-                drag = .moveComp(c.id, origin: state.circuit, start: g, moved: false)
-            } else if let w = state.circuit.hitWire(p) {
-                state.selection = .wire(w.id)
-                drag = .moveWire(w.id, origin: state.circuit, start: g, moved: false)
+            } else if let item = state.circuit.hitItem(p) {
+                // Como en las carpetas: pulsar sobre algo ya seleccionado conserva el grupo para arrastrarlo.
+                if click == .replace && !state.selection.contains(item) { state.selection = [item] }
+                drag = .move(origin: state.circuit, items: state.selection.union([item]), start: g,
+                             moved: false, item: item, click: click)
             } else {
-                state.selection = nil
-                drag = DragMode.none
+                // Hueco vacío: rectángulo de selección.
+                let base = click == .replace ? [] : state.selection
+                state.selection = base
+                drag = .marquee(start: p, base: base)
             }
         case .delete, .place:
             drag = DragMode.none
@@ -129,22 +129,20 @@ struct CircuitCanvas: View {
         switch drag {
         case .wire?:
             wireEnd = g
-        case .moveComp(let id, let origin, let start, let moved)?:
+        case .move(let origin, let items, let start, let moved, let item, let click)?:
             let d = g - start
             if d == .zero && !moved { return }
             if !moved {
                 state.checkpoint()
-                drag = .moveComp(id, origin: origin, start: start, moved: true)
+                state.selection = items
+                drag = .move(origin: origin, items: items, start: start, moved: true, item: item, click: click)
             }
-            state.circuit = origin.movingComponent(id, by: d)
-        case .moveWire(let id, let origin, let start, let moved)?:
-            let d = g - start
-            if d == .zero && !moved { return }
-            if !moved {
-                state.checkpoint()
-                drag = .moveWire(id, origin: origin, start: start, moved: true)
-            }
-            state.circuit = origin.movingWire(id, by: d)
+            state.circuit = origin.moving(items, by: d)
+        case .marquee(let start, let base)?:
+            let rect = CGRect(x: min(start.x, p.x), y: min(start.y, p.y),
+                              width: abs(p.x - start.x), height: abs(p.y - start.y))
+            state.marquee = rect
+            state.selection = base.union(state.circuit.items(in: rect))
         default:
             break
         }
@@ -157,68 +155,41 @@ struct CircuitCanvas: View {
             if g != from {
                 state.addWire(from, g)
             } else if state.tool == .select {
-                if let c = state.circuit.hitComponent(p) { clicked(c) }
-                else if let w = state.circuit.hitWire(p) { state.selection = .wire(w.id) }
-                else { state.selection = nil }
+                if let item = state.circuit.hitItem(p) { clicked(item, .replace) }
+                else { state.selection = [] }
             }
-        case .moveComp(let id, _, _, let moved)?:
-            if moved { state.cleanupWires() }
-            else if let c = state.circuit.component(id) { clicked(c) }
-        case .moveWire(_, _, _, let moved)?:
-            if moved { state.cleanupWires() }
+        case .move(_, _, _, let moved, let item, let click)?:
+            if moved { state.cleanupWires() } else { clicked(item, click) }
+        case .marquee?:
+            break
         default:
             switch state.tool {
             case .place(let k):
                 state.place(k, center: g)
             case .delete:
-                if let c = state.circuit.hitComponent(p) { state.delete(.comp(c.id)) }
-                else if let w = state.circuit.hitWire(p) { state.delete(.wire(w.id)) }
+                if let item = state.circuit.hitItem(p) { state.delete([item]) }
             default:
                 break
             }
         }
     }
 
-    /// Clic sobre un componente: selecciona; doble clic en un interruptor lo abre o cierra.
-    private func clicked(_ c: Component) {
-        state.selection = .comp(c.id)
+    /// Clic sin arrastrar. Doble clic en un interruptor lo abre o cierra.
+    private func clicked(_ item: Selection, _ click: ClickMode) {
+        switch click {
+        case .replace: state.selection = [item]
+        case .add: state.selection.insert(item)
+        case .toggle:
+            if state.selection.contains(item) { state.selection.remove(item) } else { state.selection.insert(item) }
+            return
+        }
+        guard case .comp(let id) = item, let c = state.component(id) else { return }
         let now = Date()
-        if c.kind == .toggle, let last = lastClick, last.id == c.id, now.timeIntervalSince(last.time) < 0.4 {
-            state.toggleSwitch(c.id)
+        if c.kind == .toggle, let last = lastClick, last.id == id, now.timeIntervalSince(last.time) < 0.4 {
+            state.toggleSwitch(id)
             lastClick = nil
         } else {
-            lastClick = (c.id, now)
+            lastClick = (id, now)
         }
-    }
-
-    // MARK: Teclado
-
-    private func handleKey(_ press: KeyPress) -> KeyPress.Result {
-        if press.modifiers.contains(.command) { return .ignored }
-        switch press.key {
-        case .delete, .deleteForward:
-            state.deleteSelection(); return .handled
-        case .escape:
-            state.tool = .select; drag = nil; wireEnd = nil; return .handled
-        case .space:
-            if case .comp(let id)? = state.selection, state.component(id)?.kind == .toggle {
-                state.toggleSwitch(id)
-            }
-            return .handled
-        default:
-            break
-        }
-        switch press.characters.lowercased() {
-        case "r": state.rotateSelection()
-        case "w", "c": state.tool = .wire
-        case "v", "m": state.tool = .select
-        case "d", "b": state.tool = .delete
-        case "1", "2", "3", "4", "5", "6":
-            let i = Int(press.characters)! - 1
-            state.tool = .place(Kind.allCases[i])
-        default:
-            return .ignored
-        }
-        return .handled
     }
 }

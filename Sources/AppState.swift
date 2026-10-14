@@ -7,16 +7,20 @@ enum Tool: Equatable {
     case place(Kind)
 }
 
-enum DragMode {
-    case wire(GP)
-    case moveComp(UUID, origin: Circuit, start: GP, moved: Bool)
-    case moveWire(UUID, origin: Circuit, start: GP, moved: Bool)
-    case none
+/// Qué hace un clic con modificador sobre una pieza (como en las carpetas).
+enum ClickMode {
+    case replace   // clic normal: selecciona solo esa
+    case toggle    // ⌘+clic: la añade o la quita
+    case add       // ⇧+clic: la añade
 }
 
-enum Selection: Equatable {
-    case comp(UUID)
-    case wire(UUID)
+enum DragMode {
+    case wire(GP)
+    /// Arrastrar elementos. `item` es el que se pulsó; si no se llega a mover, es un clic.
+    case move(origin: Circuit, items: Set<Selection>, start: GP, moved: Bool, item: Selection, click: ClickMode)
+    /// Rectángulo de selección desde `start`; `base` es lo que ya estaba seleccionado (con ⌘ o ⇧).
+    case marquee(start: CGPoint, base: Set<Selection>)
+    case none
 }
 
 @MainActor
@@ -28,7 +32,9 @@ final class AppState {
     private(set) var result = SolveResult()
 
     var tool: Tool = .select
-    var selection: Selection?
+    var selection: Set<Selection> = []
+    /// Rectángulo de selección que se está dibujando.
+    var marquee: CGRect?
     var placeRot = 0
     var showValues = true
     var animate = true
@@ -72,11 +78,21 @@ final class AppState {
     }
 
     private func validateSelection() {
-        switch selection {
-        case .comp(let id)?: if circuit.component(id) == nil { selection = nil }
-        case .wire(let id)?: if !circuit.wires.contains(where: { $0.id == id }) { selection = nil }
-        case nil: break
-        }
+        selection = selection.filter { circuit.contains($0) }
+    }
+
+    // MARK: Selección
+
+    /// El elemento seleccionado, si solo hay uno.
+    var single: Selection? { selection.count == 1 ? selection.first : nil }
+
+    var selectedComponentIDs: [UUID] {
+        circuit.components.map(\.id).filter { selection.contains(.comp($0)) }
+    }
+
+    func selectAll() {
+        tool = .select
+        selection = circuit.allItems
     }
 
     // MARK: Edición
@@ -96,7 +112,7 @@ final class AppState {
         checkpoint()
         let dir = Component.dirs[placeRot]
         let id = circuit.add(kind, at: center - dir * (compLen / 2), rot: placeRot)
-        selection = .comp(id)
+        selection = [.comp(id)]
     }
 
     func addWire(_ a: GP, _ b: GP) {
@@ -104,26 +120,90 @@ final class AppState {
         circuit.wire(a, b)
     }
 
-    func delete(_ sel: Selection) {
+    func delete(_ items: Set<Selection>) {
+        guard !items.isEmpty else { return }
         checkpoint()
-        switch sel {
-        case .comp(let id): circuit.components.removeAll { $0.id == id }
-        case .wire(let id): circuit.wires.removeAll { $0.id == id }
-        }
-        if selection == sel { selection = nil }
+        circuit.components.removeAll { items.contains(.comp($0.id)) }
+        circuit.wires.removeAll { items.contains(.wire($0.id)) }
+        selection.subtract(items)
     }
 
     func deleteSelection() {
-        if let s = selection { delete(s) }
+        delete(selection)
     }
 
+    /// Gira cada pieza seleccionada sobre su centro.
     func rotateSelection() {
         if case .place = tool { placeRot = (placeRot + 1) % 4; return }
-        if case .comp(let id)? = selection { update(id) { $0.rotate() } }
+        let ids = Set(selectedComponentIDs)
+        guard !ids.isEmpty else { return }
+        checkpoint()
+        for i in circuit.components.indices where ids.contains(circuit.components[i].id) {
+            circuit.components[i].rotate()
+        }
     }
 
     func toggleSwitch(_ id: UUID) {
         update(id) { $0.closed.toggle() }
+    }
+
+    /// Abre o cierra todos los interruptores seleccionados.
+    func toggleSelectedSwitches() {
+        let ids = Set(selectedComponentIDs.filter { component($0)?.kind == .toggle })
+        guard !ids.isEmpty else { return }
+        checkpoint()
+        for i in circuit.components.indices where ids.contains(circuit.components[i].id) {
+            circuit.components[i].closed.toggle()
+        }
+    }
+
+    // MARK: Teclado
+
+    /// Atajos del lienzo. Se leen directamente de macOS (por código de tecla) para que funcionen
+    /// tenga quien tenga el foco, salvo mientras se escribe en un campo de texto.
+    func installKeyMonitor() {
+        NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Los monitores locales se llaman siempre en el hilo principal.
+            nonisolated(unsafe) let e = event
+            let handled = MainActor.assumeIsolated { AppState.shared.handleKey(e) }
+            return handled ? nil : event
+        }
+    }
+
+    func handleKey(_ e: NSEvent) -> Bool {
+        guard let win = e.window, win.attachedSheet == nil, NSApp.modalWindow == nil else { return false }
+        if win.firstResponder is NSText { return false }   // escribiendo en un campo
+        let mods = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let key = e.charactersIgnoringModifiers?.lowercased() ?? ""
+        if mods.contains(.command) {
+            switch (e.keyCode, key) {
+            case (_, "a"): selectAll(); return true
+            case (51, _), (117, _): deleteSelection(); return true    // ⌘⌫, como en el Finder
+            default: return false
+            }
+        }
+        if mods.contains(.control) || mods.contains(.option) { return false }
+        switch e.keyCode {
+        case 51, 117:   // ⌫ y Supr (fn+⌫)
+            deleteSelection(); return true
+        case 53:        // Esc
+            if tool == .select { selection = [] } else { tool = .select }
+            drag = nil; wireEnd = nil; marquee = nil
+            return true
+        case 49:        // espacio
+            toggleSelectedSwitches(); return true
+        default:
+            break
+        }
+        switch key {
+        case "r": rotateSelection()
+        case "w", "c": tool = .wire
+        case "v", "m": tool = .select
+        case "d", "b": tool = .delete
+        case "1", "2", "3", "4", "5", "6": tool = .place(Kind.allCases[Int(key)! - 1])
+        default: return false
+        }
+        return true
     }
 
     func cleanupWires() {
@@ -139,14 +219,14 @@ final class AppState {
         checkpoint()
         circuit = Circuit()
         fileURL = nil
-        selection = nil
+        selection = []
     }
 
     func loadExample(_ n: Int) {
         checkpoint()
         circuit = .example(n)
         fileURL = nil
-        selection = nil
+        selection = []
     }
 
     func open() {
@@ -158,7 +238,7 @@ final class AppState {
             checkpoint()
             circuit = c
             fileURL = url
-            selection = nil
+            selection = []
         } catch {
             alert("No se pudo abrir el archivo", error)
         }

@@ -1710,7 +1710,7 @@ if (window.circuitMaker) {
 }
 
 // Versión web (ChromeOS y cualquier navegador): instalable y con modo sin conexión.
-const WEB_VERSION = '1.0.0';   // web/build-web.sh pone aquí el número de versión
+const WEB_VERSION = '1.1.0';   // web/build-web.sh pone aquí el número de versión
 if (!window.circuitMaker && /^https?:$/.test(location.protocol)) {
   $('logo').parentElement.title = 'Versión ' + WEB_VERSION;
   if ('serviceWorker' in navigator) {

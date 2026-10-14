@@ -1,7 +1,7 @@
 {
   "name": "circuit-maker",
   "productName": "Circuit Maker",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Editor de circuitos en modo esquema con cálculo de tensiones, corrientes y potencias.",
   "main": "main.js",
   "author": "ikerdpv",
